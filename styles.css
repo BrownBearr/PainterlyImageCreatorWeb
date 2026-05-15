@@ -1,19 +1,32 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:       #1a1a1a;
-  --surface:  #242424;
-  --border:   #333;
-  --accent:   #c8a96e;
-  --text:     #e0e0e0;
-  --muted:    #888;
-  --btn-bg:   #c8a96e;
-  --btn-text: #1a1a1a;
-  --radius:   6px;
+  /* Surfaces */
+  --bg:        #f2f2f7;   /* page background */
+  --surface:   #ffffff;   /* sidebar, panels */
+  --border:    #d1d1e0;   /* dividers, input borders */
+  --canvas-bg: #e4e4ee;   /* image preview well */
+
+  /* Accent — #3737d6 on white = 7.74 : 1  (WCAG AAA) */
+  --accent:    #3737d6;
+  --accent-hi: #2828b8;   /* hover / pressed (darker = higher contrast on light bg) */
+  --accent-tint: #eeeeff; /* very light tint for secondary actions */
+
+  /* Text — both pass WCAG AA on --surface and --bg */
+  --text:      #1a1a2e;   /* primary  ~17 : 1 on white */
+  --muted:     #5c5c7a;   /* secondary ~5.9 : 1 on white */
+
+  /* Buttons */
+  --btn-bg:    #3737d6;
+  --btn-text:  #ffffff;   /* white on --accent = 7.74 : 1 ✓ */
+
+  --radius:    6px;
+  --font-ui:   'DM Sans', system-ui, sans-serif;
+  --font-mono: 'Lilex', 'JetBrains Mono', monospace;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   background: var(--bg);
   color: var(--text);
@@ -36,6 +49,19 @@ header {
   min-height: 42px;
 }
 
+header h1 {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+}
+
+header .subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ─── Mode tabs ───────────────────────────────────────────────────────────── */
 
 .mode-tabs {
@@ -50,6 +76,7 @@ header {
   border-bottom: 2px solid transparent;
   color: var(--muted);
   cursor: pointer;
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -58,20 +85,8 @@ header {
   transition: color 0.15s, border-color 0.15s;
 }
 
-.mode-tab:hover { color: var(--text); }
+.mode-tab:hover:not(.active) { color: var(--accent-hi); }
 .mode-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-header h1 {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-}
-
-header .subtitle {
-  color: var(--muted);
-  font-size: 12px;
-}
 
 /* ─── Layout ──────────────────────────────────────────────────────────────── */
 
@@ -84,13 +99,14 @@ header .subtitle {
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
 
 .sidebar {
-  width: 260px;
+  width: 264px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--surface);
   overflow-y: auto;
+  box-shadow: 1px 0 0 var(--border);
 }
 
 .sidebar-section {
@@ -103,13 +119,13 @@ header .subtitle {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: var(--muted);  /* 5.9:1 on white ✓ */
   margin-bottom: 10px;
 }
 
-/* ─── Drop zone ───────────────────────────────────────────────────────────── */
+/* ─── Drop zones ──────────────────────────────────────────────────────────── */
 
-#video-drop-zone {
+#drop-zone, #video-drop-zone {
   border: 1.5px dashed var(--border);
   border-radius: var(--radius);
   padding: 14px 10px;
@@ -117,30 +133,16 @@ header .subtitle {
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
-  transition: border-color 0.15s, color 0.15s;
+  background: var(--bg);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
   user-select: none;
 }
 
+#drop-zone:hover, #drop-zone.drag-over,
 #video-drop-zone:hover, #video-drop-zone.drag-over {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-#drop-zone {
-  border: 1.5px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 14px 10px;
-  text-align: center;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 12px;
-  transition: border-color 0.15s, color 0.15s;
-  user-select: none;
-}
-
-#drop-zone:hover, #drop-zone.drag-over {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent-tint);
 }
 
 /* ─── Form controls ───────────────────────────────────────────────────────── */
@@ -161,8 +163,9 @@ header .subtitle {
 }
 
 .field label .val {
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);   /* 7.74:1 on white ✓ */
   min-width: 30px;
   text-align: right;
 }
@@ -180,11 +183,15 @@ input[type="range"] {
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 13px; height: 13px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   background: var(--accent);
   cursor: pointer;
+  transition: background 0.15s;
+  box-shadow: 0 1px 3px rgba(55,55,214,0.30);
 }
+
+input[type="range"]:hover::-webkit-slider-thumb { background: var(--accent-hi); }
 
 input[type="text"], input[type="number"] {
   width: 100%;
@@ -193,12 +200,15 @@ input[type="text"], input[type="number"] {
   border-radius: var(--radius);
   color: var(--text);
   padding: 5px 8px;
+  font-family: var(--font-mono);
   font-size: 12px;
   outline: none;
+  transition: border-color 0.15s;
 }
 
 input[type="text"]:focus, input[type="number"]:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(55,55,214,0.12);
 }
 
 select {
@@ -208,12 +218,17 @@ select {
   border-radius: var(--radius);
   color: var(--text);
   padding: 5px 8px;
+  font-family: var(--font-ui);
   font-size: 12px;
   outline: none;
   cursor: pointer;
+  transition: border-color 0.15s;
 }
 
-select:focus { border-color: var(--accent); }
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(55,55,214,0.12);
+}
 
 .checkbox-row {
   display: flex;
@@ -221,6 +236,7 @@ select:focus { border-color: var(--accent); }
   gap: 8px;
   margin-bottom: 8px;
   font-size: 12px;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -230,7 +246,8 @@ select:focus { border-color: var(--accent); }
   cursor: pointer;
 }
 
-/* Texture controls */
+/* ─── Texture controls ────────────────────────────────────────────────────── */
+
 .tex-row {
   display: flex;
   gap: 6px;
@@ -247,7 +264,7 @@ select:focus { border-color: var(--accent); }
   font-size: 12px;
   color: var(--text);
   white-space: nowrap;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, color 0.15s;
 }
 
 .tex-row label.file-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -272,7 +289,28 @@ select:focus { border-color: var(--accent); }
   white-space: nowrap;
 }
 
-.clear-link:hover { color: var(--text); }
+.clear-link:hover { color: var(--accent); }
+
+/* ─── Batch file btn ──────────────────────────────────────────────────────── */
+
+label.file-btn {
+  display: block;
+  padding: 10px;
+  text-align: center;
+  background: var(--bg);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+label.file-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
 
 /* ─── Action buttons ──────────────────────────────────────────────────────── */
 
@@ -288,22 +326,29 @@ select:focus { border-color: var(--accent); }
   padding: 7px 14px;
   border: none;
   border-radius: var(--radius);
+  font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s;
 }
 
-.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Primary — accent fill, white text, 7.74:1 ✓ */
 .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
-.btn-primary:not(:disabled):hover { background: #dbbe85; }
+.btn-primary:not(:disabled):hover {
+  background: var(--accent-hi);
+  box-shadow: 0 2px 6px rgba(55,55,214,0.30);
+}
 
+/* Secondary — light gray fill, dark text, ~11:1 ✓ */
 .btn-secondary { background: var(--border); color: var(--text); }
-.btn-secondary:not(:disabled):hover { background: #444; }
+.btn-secondary:not(:disabled):hover { background: #c0c0d4; }
 
-.btn-download { background: #3a5c3a; color: #c8e8c8; }
-.btn-download:not(:disabled):hover { background: #4a7a4a; }
+/* Download — accent tint fill, accent text, 7.74:1 ✓ */
+.btn-download { background: var(--accent-tint); color: var(--accent); border: 1px solid var(--accent); }
+.btn-download:not(:disabled):hover { background: var(--accent); color: #fff; }
 
 /* ─── Progress ────────────────────────────────────────────────────────────── */
 
@@ -328,7 +373,7 @@ select:focus { border-color: var(--accent); }
 
 #frame-progress-bar {
   height: 100%;
-  background: #6b8f6b;
+  background: var(--accent-hi);
   width: 0%;
   transition: width 0.1s ease;
   border-radius: 3px;
@@ -338,6 +383,7 @@ select:focus { border-color: var(--accent); }
   color: var(--muted);
   font-size: 11px;
   padding: 8px 14px 4px;
+  font-family: var(--font-mono);
 }
 
 /* ─── Canvas area ─────────────────────────────────────────────────────────── */
@@ -348,7 +394,7 @@ select:focus { border-color: var(--accent); }
   align-items: center;
   justify-content: center;
   overflow: auto;
-  background: #111;
+  background: var(--canvas-bg);
   position: relative;
 }
 
@@ -365,14 +411,15 @@ select:focus { border-color: var(--accent); }
   max-height: 100%;
   display: block;
   image-rendering: pixelated;
+  box-shadow: 0 4px 24px rgba(55,55,214,0.10), 0 1px 4px rgba(0,0,0,0.08);
 }
 
 /* ─── Scrollbar ───────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #555; }
+::-webkit-scrollbar-thumb:hover { background: #a8a8c4; }
 
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
 
