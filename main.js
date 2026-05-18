@@ -40,6 +40,93 @@ const statusText     = document.getElementById('status-text');
 const placeholder    = document.getElementById('placeholder');
 const modeTabs       = document.querySelectorAll('.mode-tab');
 
+// ─── Presets ──────────────────────────────────────────────────────────────────
+// Edit values here to tune each preset. TODO: tune values
+
+const PRESETS = {
+  hertzmann: { // TODO: tune values — canonical 1998 paper defaults
+    brushRadii: '8, 4, 2',
+    maxStrokeLength: 16,
+    minStrokeLength: 4,
+    curvature: 1.0,
+    threshold: 50,
+    gridFactor: 1.0,
+    opacity: 0.9,
+    underpaintMode: 'blur',
+    fastPreview: false,
+    seed: 0,
+  },
+  loose: { // TODO: tune values — broad strokes, less detail
+    brushRadii: '16, 8',
+    maxStrokeLength: 24,
+    minStrokeLength: 8,
+    curvature: 0.85,
+    threshold: 100,
+    gridFactor: 1.5,
+    opacity: 0.85,
+    underpaintMode: 'blur',
+    fastPreview: false,
+    seed: 0,
+  },
+  detailed: { // TODO: tune values — tight, controlled, high fidelity
+    brushRadii: '8, 4, 2, 1',
+    maxStrokeLength: 12,
+    minStrokeLength: 2,
+    curvature: 1.0,
+    threshold: 25,
+    gridFactor: 0.75,
+    opacity: 0.95,
+    underpaintMode: 'blur',
+    fastPreview: false,
+    seed: 0,
+  },
+  sketchy: { // TODO: tune values — gestural, low opacity, short strokes
+    brushRadii: '6, 3',
+    maxStrokeLength: 8,
+    minStrokeLength: 2,
+    curvature: 1.0,
+    threshold: 60,
+    gridFactor: 1.25,
+    opacity: 0.6,
+    underpaintMode: 'none',
+    fastPreview: false,
+    seed: 0,
+  },
+};
+
+let _applyingPreset = false;
+
+function setSlider(id, val) {
+  const inp = document.getElementById(id);
+  const lbl = document.getElementById(id + '-val');
+  if (inp) inp.value = val;
+  if (lbl) lbl.textContent = val;
+}
+
+function applyPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  _applyingPreset = true;
+  document.getElementById('preset-select').value = key;
+  document.getElementById('brush-radii').value = p.brushRadii;
+  setSlider('max-stroke-len', p.maxStrokeLength);
+  setSlider('min-stroke-len', p.minStrokeLength);
+  setSlider('curvature', p.curvature);
+  setSlider('threshold', p.threshold);
+  setSlider('grid-factor', p.gridFactor);
+  setSlider('opacity', p.opacity);
+  document.getElementById('underpaint-mode').value = p.underpaintMode;
+  document.getElementById('fast-preview').checked = p.fastPreview;
+  document.getElementById('seed').value = p.seed;
+  _applyingPreset = false;
+}
+
+function markCustom() {
+  if (_applyingPreset) return;
+  const sel = document.getElementById('preset-select');
+  if (sel.value !== 'custom') sel.value = 'custom';
+}
+
 // ─── Mode switching ───────────────────────────────────────────────────────────
 
 modeTabs.forEach(tab => {
@@ -109,10 +196,15 @@ function loadTexFile(file) {
 
 function loadVideoFile(file) {
   if (!file?.type.startsWith('video/')) return;
+  clearThumbState(); // invalidate any previous thumbnails + tuned-frame state
   videoFile = file;
   videoInfo.textContent = `${file.name} · ${(file.size / 1e6).toFixed(1)} MB`;
   updateButtonStates();
-  setStatus('Video ready. Set FPS and click Process Video.');
+  setStatus('Video ready. Generating sample frames…');
+  generateThumbnails(file).catch(err => {
+    console.warn('Thumbnail generation failed:', err);
+    setStatus('Video ready. (Thumbnail preview unavailable.)');
+  });
 }
 
 function loadBatchFiles(files) {
@@ -121,6 +213,132 @@ function loadBatchFiles(files) {
     ? `${batchFiles.length} image${batchFiles.length > 1 ? 's' : ''} selected`
     : 'No valid images selected';
   updateButtonStates();
+}
+
+// ─── Video frame-test thumbnails ─────────────────────────────────────────────
+// Frame extraction reuses the same seek-and-draw primitive as VideoProcessor,
+// but operates on a dedicated HTMLVideoElement kept alive for the session so
+// the user can click any thumbnail at any time without re-seeking from scratch.
+
+const THUMB_PCTS = [0, 0.25, 0.5, 0.75, 1.0];
+let _thumbVid     = null;   // video element kept alive for seek-based frame loading
+let _thumbUrls    = [];     // blob URLs for the 5 thumbnails (revoked on new load)
+let tunedOnFramePct = null; // which % frame was sent to the Image tab, or null
+
+function clearThumbState() {
+  if (_thumbVid) { _thumbVid.src = ''; _thumbVid = null; }
+  _thumbUrls.forEach(u => URL.revokeObjectURL(u));
+  _thumbUrls = [];
+  tunedOnFramePct = null;
+  document.getElementById('thumb-row').innerHTML = '';
+  document.getElementById('thumb-strip').style.display = 'none';
+  updateVideoBtnLabel();
+}
+
+async function generateThumbnails(file) {
+  const vid = document.createElement('video');
+  vid.muted = true;
+  vid.preload = 'metadata';
+  // Create an object URL and keep it alive via the element reference.
+  // Revoked only in clearThumbState() when a new video is loaded.
+  const objUrl = URL.createObjectURL(file);
+  _thumbUrls.push(objUrl); // track so we can revoke later
+  vid.src = objUrl;
+  _thumbVid = vid;
+
+  await new Promise((res, rej) => {
+    vid.onloadedmetadata = res;
+    vid.onerror = () => rej(new Error('Cannot read video for thumbnails'));
+  });
+
+  const { videoWidth: vw, videoHeight: vh, duration } = vid;
+  const thumbW = 100;
+  const thumbH = Math.max(1, Math.round(thumbW * vh / vw));
+  const off = new OffscreenCanvas(thumbW, thumbH);
+  const octx = off.getContext('2d');
+
+  const thumbRow  = document.getElementById('thumb-row');
+  const thumbStrip = document.getElementById('thumb-strip');
+  thumbRow.innerHTML = '';
+
+  for (const pct of THUMB_PCTS) {
+    // Clamp near end to avoid seeking past EOF on some codecs
+    const t = pct >= 1 ? Math.max(0, duration - 0.05) : duration * pct;
+    vid.currentTime = t;
+    await new Promise(res => vid.addEventListener('seeked', res, { once: true }));
+
+    octx.drawImage(vid, 0, 0, thumbW, thumbH);
+    const blob    = await off.convertToBlob({ type: 'image/jpeg', quality: 0.75 });
+    const thumbUrl = URL.createObjectURL(blob);
+    _thumbUrls.push(thumbUrl);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'thumb-wrapper';
+    wrapper.title = `${Math.round(pct * 100)}% into video — click to load into Image tab`;
+
+    const img = document.createElement('img');
+    img.src = thumbUrl;
+    img.className = 'thumb-img';
+    img.draggable = false;
+
+    const lbl = document.createElement('span');
+    lbl.className = 'thumb-label';
+    lbl.textContent = Math.round(pct * 100) + '%';
+
+    wrapper.append(img, lbl);
+    wrapper.addEventListener('click', () => loadFrameIntoImageTab(pct));
+    thumbRow.appendChild(wrapper);
+
+    // Show the strip as soon as the first thumb is ready
+    if (thumbStrip.style.display === 'none') thumbStrip.style.display = '';
+  }
+
+  setStatus('Video ready. Click a frame to tune, then switch back to render.');
+}
+
+async function loadFrameIntoImageTab(pct) {
+  if (!_thumbVid) return;
+  const vid = _thumbVid;
+  const { videoWidth: vw, videoHeight: vh, duration } = vid;
+
+  const t = pct >= 1 ? Math.max(0, duration - 0.05) : duration * pct;
+  vid.currentTime = t;
+  await new Promise(res => vid.addEventListener('seeked', res, { once: true }));
+
+  // Extract full-resolution frame
+  const off = new OffscreenCanvas(vw, vh);
+  off.getContext('2d').drawImage(vid, 0, 0, vw, vh);
+  sourceImageData = off.getContext('2d').getImageData(0, 0, vw, vh);
+
+  // Show on the main canvas
+  placeholder.style.display = 'none';
+  canvas.width = vw; canvas.height = vh;
+  ctx.putImageData(sourceImageData, 0, 0);
+  resultBlob = null;
+  downloadBtn.disabled = true;
+
+  // Record which frame was tuned and update the video button label
+  tunedOnFramePct = pct;
+  updateVideoBtnLabel();
+
+  // Highlight the selected thumbnail
+  document.querySelectorAll('.thumb-wrapper').forEach(w => {
+    w.classList.toggle('thumb-active', parseFloat(w.dataset.pct ?? -1) === pct);
+  });
+
+  // Switch to Image tab (the click handler sets mode + status)
+  document.querySelector('.mode-tab[data-mode="image"]').click();
+  // Override the generic status with something more useful
+  setStatus(`Frame at ${Math.round(pct * 100)}% loaded — tune, then return to Video tab.`);
+  updateButtonStates();
+}
+
+function updateVideoBtnLabel() {
+  if (tunedOnFramePct !== null) {
+    videoBtn.textContent = `▶ Tuned on ${Math.round(tunedOnFramePct * 100)}% frame · Render full video`;
+  } else {
+    videoBtn.textContent = '▶ Process Video';
+  }
 }
 
 // ─── Drag & drop — image ──────────────────────────────────────────────────────
@@ -332,6 +550,24 @@ function setStatus(msg) { statusText.textContent = msg; }
   });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+
+// Apply default preset on load (sets all sliders to Hertzmann values)
+applyPreset('hertzmann');
+
+// Preset dropdown → apply preset or no-op on "Custom"
+document.getElementById('preset-select').addEventListener('change', (e) => {
+  if (e.target.value !== 'custom') applyPreset(e.target.value);
+});
+
+// Any manual param edit → switch dropdown to Custom
+['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
+ 'threshold', 'grid-factor', 'opacity', 'seed', 'underpaint-mode', 'fast-preview']
+  .forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input',  markCustom);
+    el.addEventListener('change', markCustom);
+  });
 
 updateButtonStates();
 setStatus('Upload an image to begin.');

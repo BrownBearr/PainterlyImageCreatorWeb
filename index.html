@@ -49,6 +49,12 @@
         <p id="video-info" style="margin-top:8px; color:var(--muted); font-size:11px"></p>
       </div>
 
+      <!-- Frame-test thumbnail strip (populated by JS after video loads) -->
+      <div class="sidebar-section" id="thumb-strip" style="display:none">
+        <h2>Sample frames — click to tune in Image tab</h2>
+        <div id="thumb-row"></div>
+      </div>
+
       <div class="sidebar-section">
         <h2>Video Options</h2>
         <div class="field">
@@ -81,6 +87,18 @@
         </p>
       </div>
 
+    </div>
+
+    <!-- ══ PRESETS ════════════════════════════════════════════════════════ -->
+    <div class="sidebar-section" id="preset-section">
+      <h2>Preset</h2>
+      <select id="preset-select">
+        <option value="hertzmann">Hertzmann paper defaults</option>
+        <option value="loose">Loose</option>
+        <option value="detailed">Detailed</option>
+        <option value="sketchy">Sketchy</option>
+        <option value="custom" disabled>Custom</option>
+      </select>
     </div>
 
     <!-- ══ SHARED SETTINGS (always visible) ════════════════════════════════ -->

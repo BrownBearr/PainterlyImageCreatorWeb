@@ -421,6 +421,52 @@ label.file-btn:hover {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #a8a8c4; }
 
+/* ─── Video thumbnails ────────────────────────────────────────────────────── */
+
+#thumb-row {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+#thumb-row::-webkit-scrollbar { height: 3px; }
+
+.thumb-wrapper {
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  background: var(--border);
+}
+
+.thumb-wrapper:hover {
+  border-color: var(--accent);
+}
+
+.thumb-wrapper.thumb-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(55,55,214,0.20);
+}
+
+.thumb-img {
+  display: block;
+  width: 100px;
+  height: auto;
+}
+
+.thumb-label {
+  display: block;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 0 3px;
+  background: var(--surface);
+}
+
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
