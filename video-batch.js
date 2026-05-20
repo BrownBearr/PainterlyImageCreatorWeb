@@ -182,6 +182,7 @@ class VideoProcessor {
 
     // ── 2. Decide encoding strategy ────────────────────────────────────────
     const hasWebCodecs = typeof VideoEncoder !== 'undefined';
+    const hasRVFC = typeof videoEl.requestVideoFrameCallback === 'function';
 
     const offscreen = new OffscreenCanvas(vw, vh);
     const octx = offscreen.getContext('2d');
@@ -225,14 +226,39 @@ class VideoProcessor {
     }
 
     // ── 3. Frame-by-frame: extract → paint → encode/collect ───────────────
+    // We seek to each target time and use requestVideoFrameCallback (when
+    // available) to get the actual presented frame's mediaTime, avoiding the
+    // keyframe-landing duplicate-frame problem that seek-only extraction causes.
     for (let i = 0; i < totalFrames; i++) {
       if (this._cancelled) break;
 
       this._onStatus(`Painting frame ${i + 1} / ${totalFrames}`);
 
-      videoEl.currentTime = i / fps;
+      const targetTime = i / fps;
+      videoEl.currentTime = targetTime;
       await new Promise((res) => videoEl.addEventListener('seeked', res, { once: true }));
       if (this._cancelled) break;
+
+      // Use rVFC to get the exact mediaTime of the frame the browser actually
+      // decoded — this prevents using a stale/keyframe time as the timestamp.
+      let timestamp_us;
+      if (hasRVFC) {
+        // After seeked fires, rVFC will call back on the next presented frame.
+        // We must call play() briefly to trigger frame presentation; we pause
+        // immediately inside the callback to keep playback frozen.
+        const meta = await new Promise((res) => {
+          videoEl.requestVideoFrameCallback((_, m) => {
+            videoEl.pause();
+            res(m);
+          });
+          videoEl.play().catch(() => {});
+        });
+        timestamp_us = Math.round(meta.mediaTime * 1_000_000);
+      } else {
+        // Fallback: use the seek target time (may have small inaccuracies but
+        // produces monotonically-increasing timestamps which is what matters most).
+        timestamp_us = Math.round(targetTime * 1_000_000);
+      }
 
       octx.drawImage(videoEl, 0, 0);
       const frameData = octx.getImageData(0, 0, vw, vh);
@@ -241,8 +267,6 @@ class VideoProcessor {
         this._onFrameProgress(i, totalFrames, p);
       });
       if (this._cancelled) break;
-
-      const timestamp_us = Math.round(i * 1_000_000 / fps);
 
       if (encoder) {
         const imgd = new ImageData(new Uint8ClampedArray(painted.data), painted.width, painted.height);
@@ -315,13 +339,29 @@ class BatchProcessor {
       }
     }
 
+    // Sort files numerically by the last digit group in the filename so that
+    // frame_001.png < frame_002.png < … < frame_010.png (not lexicographic order).
+    const sortedFiles = [...files].sort((a, b) => {
+      const key = (f) => {
+        const stem = f.name.replace(/\.[^.]+$/, '');
+        const nums = stem.match(/\d+/g);
+        // Files with a trailing number sort before those without, then by that number.
+        return nums
+          ? [0, parseInt(nums[nums.length - 1], 10), stem.toLowerCase()]
+          : [1, 0, stem.toLowerCase()];
+      };
+      const ka = key(a), kb = key(b);
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2].localeCompare(kb[2]);
+    });
+
     const zip = dirHandle ? null : new ZipWriter();
-    const total = files.length;
+    const total = sortedFiles.length;
+    const padLen = String(total).length;
 
     for (let i = 0; i < total; i++) {
       if (this._cancelled) break;
 
-      const file = files[i];
+      const file = sortedFiles[i];
       this._onStatus(`Processing ${file.name} (${i + 1} / ${total})`);
 
       // Load image
@@ -334,7 +374,8 @@ class BatchProcessor {
       if (this._cancelled) break;
 
       const stem = file.name.replace(/\.[^.]+$/, '');
-      const outName = `${stem}_painterly.png`;
+      // Zero-pad the sequence index so output files sort correctly in any file browser.
+      const outName = `${String(i + 1).padStart(padLen, '0')}_${stem}_painterly.png`;
       const png = await imageDataToPng(painted);
 
       if (dirHandle) {
