@@ -132,6 +132,14 @@ async function imageDataToPng(imgData) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+async function imageDataToJpeg(imgData, quality = 0.92) {
+  const canvas = new OffscreenCanvas(imgData.width, imgData.height);
+  const ctx = canvas.getContext('2d');
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(imgData.data), imgData.width, imgData.height), 0, 0);
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 function triggerDownload(data /* Uint8Array | Blob */, filename) {
   const blob = data instanceof Blob ? data : new Blob([data]);
   const a = document.createElement('a');
@@ -192,6 +200,7 @@ class VideoProcessor {
     let resultChunks = [];   // for WebCodecs path
     let zipWriter = null;    // for ZIP fallback
     let encoder = null;
+    let lastTimestamp_us = -1; // monotonic guard — encoder rejects non-increasing timestamps
 
     if (hasWebCodecs) {
       const encChunks = [];
@@ -259,6 +268,11 @@ class VideoProcessor {
         // produces monotonically-increasing timestamps which is what matters most).
         timestamp_us = Math.round(targetTime * 1_000_000);
       }
+
+      // Enforce strict monotonicity — the encoder will throw if timestamps go
+      // backwards or repeat (can happen when two seeks land on the same keyframe).
+      if (timestamp_us <= lastTimestamp_us) timestamp_us = lastTimestamp_us + Math.round(1_000_000 / fps);
+      lastTimestamp_us = timestamp_us;
 
       octx.drawImage(videoEl, 0, 0);
       const frameData = octx.getImageData(0, 0, vw, vh);
@@ -375,16 +389,16 @@ class BatchProcessor {
 
       const stem = file.name.replace(/\.[^.]+$/, '');
       // Zero-pad the sequence index so output files sort correctly in any file browser.
-      const outName = `${String(i + 1).padStart(padLen, '0')}_${stem}_painterly.png`;
-      const png = await imageDataToPng(painted);
+      const outName = `${String(i + 1).padStart(padLen, '0')}_${stem}_painterly.jpg`;
+      const jpg = await imageDataToJpeg(painted);
 
       if (dirHandle) {
         const fh = await dirHandle.getFileHandle(outName, { create: true });
         const w = await fh.createWritable();
-        await w.write(png);
+        await w.write(jpg);
         await w.close();
       } else {
-        zip.add(outName, png);
+        zip.add(outName, jpg);
       }
     }
 
