@@ -151,6 +151,12 @@ function buildSeekHead(entries /* [{idBytes, offset}] */) {
 // chunks: Array of { timestamp_us: number, isKey: boolean, data: Uint8Array }
 // Returns a Uint8Array containing the complete .webm file.
 function muxWebM(chunks, width, height, fps, codecId = 'V_VP8') {
+  // Sort by presentation timestamp — VP9 (and future codecs) may emit encoded
+  // chunks in decode order rather than display order. buildClusters writes
+  // blocks sequentially, so unsorted input produces negative relative timecodes
+  // (int16 overflow in the SimpleBlock header) and misplaced frames.
+  chunks = [...chunks].sort((a, b) => a.timestamp_us - b.timestamp_us);
+
   const durationMs = chunks.length
     ? Math.ceil(chunks[chunks.length - 1].timestamp_us / 1000 + 1000 / fps)
     : 0;
