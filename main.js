@@ -9,6 +9,7 @@ let batchProcessor = null;
 let isRendering = false;
 
 let sourceImageData = null;
+let maskImageData   = null;
 let videoFile       = null;
 let batchFiles      = [];
 let resultBlob      = null;
@@ -330,6 +331,29 @@ videoInput.addEventListener('change', () => loadVideoFile(videoInput.files[0]));
 
 batchInput.addEventListener('change', () => loadBatchFiles(batchInput.files));
 
+// ─── Mask loading ────────────────────────────────────────────────────────────
+
+function loadMaskFile(file) {
+  if (!file?.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    const off = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+    off.getContext('2d').drawImage(img, 0, 0);
+    maskImageData = off.getContext('2d').getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+    document.getElementById('mask-label').textContent = `${file.name} (${img.naturalWidth}×${img.naturalHeight})`;
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+document.getElementById('mask-input').addEventListener('change', (e) => loadMaskFile(e.target.files[0]));
+document.getElementById('clear-mask').addEventListener('click', () => {
+  maskImageData = null;
+  document.getElementById('mask-input').value = '';
+  document.getElementById('mask-label').textContent = 'No mask loaded';
+});
+
 // ─── Parameter reading ────────────────────────────────────────────────────────
 
 function getParams() {
@@ -347,6 +371,9 @@ function getParams() {
     satJitter:            parseFloat(document.getElementById('sat-jitter').value) || 0,
     valJitter:            parseFloat(document.getElementById('val-jitter').value) || 0,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
+    maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
+    maskWidth:  maskImageData ? maskImageData.width  : 0,
+    maskHeight: maskImageData ? maskImageData.height : 0,
     impastoStrength:      parseFloat(document.getElementById('impasto-strength').value) || 0,
     impastoLightStrength: parseFloat(document.getElementById('impasto-light').value) || 0,
     lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,

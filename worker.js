@@ -376,7 +376,8 @@ function paintify(imageData, params, onProgress, prevState) {
           curvature, opacity, gridFactor, underpaintMode = 'average',
           hueJitter = 0, satJitter = 0, valJitter = 0,
           impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
-          frameDiffThreshold = 0 } = params;
+          frameDiffThreshold = 0,
+          maskData = null, maskWidth = 0, maskHeight = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -446,7 +447,17 @@ function paintify(imageData, params, onProgress, prevState) {
       const cx1 = Math.min(w, cx0 + grid), cy1 = Math.min(h, cy0 + grid);
       const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w);
 
-      if (meanErr <= threshold && !isFirstLayer) continue;
+      // Detail mask: modulate effective threshold by mask brightness at stroke seed
+      let effectiveThreshold = threshold;
+      if (maskData && maskWidth > 0 && maskHeight > 0) {
+        const mx = Math.round(sx * (maskWidth  - 1) / Math.max(1, w - 1));
+        const my = Math.round(sy * (maskHeight - 1) / Math.max(1, h - 1));
+        const mi = (Math.max(0, Math.min(maskHeight - 1, my)) * maskWidth
+                  + Math.max(0, Math.min(maskWidth  - 1, mx))) * 4;
+        const maskVal = (maskData[mi] * 0.299 + maskData[mi+1] * 0.587 + maskData[mi+2] * 0.114) / 255;
+        effectiveThreshold = Math.max(1, threshold * (1 - maskVal));
+      }
+      if (meanErr <= effectiveThreshold && !isFirstLayer) continue;
 
       // Temporal coherence: skip cell if max source diff is below threshold
       if (cellDiffMap) {

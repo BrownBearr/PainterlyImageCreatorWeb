@@ -37,6 +37,19 @@
         <input type="file" id="file-input" accept="image/*" style="display:none" />
       </div>
 
+      <div class="sidebar-section">
+        <h2>Detail Mask (optional)</h2>
+        <div class="tex-row">
+          <label class="file-btn" for="mask-input">Upload…</label>
+          <input type="file" id="mask-input" accept="image/*" style="display:none" />
+          <span id="mask-label">No mask loaded</span>
+          <button id="clear-mask" class="clear-link">clear</button>
+        </div>
+        <p style="margin-top:8px; color:#666; font-size:11px; line-height:1.5">
+          White = finer strokes, black = unchanged. Grayscale image.
+        </p>
+      </div>
+
     </div>
 
     <!-- ══ VIDEO MODE ══════════════════════════════════════════════════════ -->
