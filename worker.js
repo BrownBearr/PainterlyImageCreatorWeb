@@ -158,6 +158,49 @@ function computeGradients(rgbF32, w, h) {
   return { gx, gy, gmag };
 }
 
+// ─── Structure-tensor gradient smoothing ──────────────────────────────────────
+
+function computeGradientsST(rgbF32, w, h, sigma) {
+  // Raw Sobel first
+  const { gx: rawGx, gy: rawGy } = computeGradients(rgbF32, w, h);
+
+  // Build the three tensor components: Jxx = gx^2, Jxy = gx*gy, Jyy = gy^2
+  const Jxx = new Float32Array(w * h);
+  const Jxy = new Float32Array(w * h);
+  const Jyy = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    Jxx[i] = rawGx[i] * rawGx[i];
+    Jxy[i] = rawGx[i] * rawGy[i];
+    Jyy[i] = rawGy[i] * rawGy[i];
+  }
+
+  // Gaussian-smooth each component (reuse gaussianBlurRGB by packing into RGB)
+  const pack = new Float32Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) { pack[i*3] = Jxx[i]; pack[i*3+1] = Jxy[i]; pack[i*3+2] = Jyy[i]; }
+  const smoothed = gaussianBlurRGB(pack, w, h, sigma);
+
+  // Extract smoothed dominant direction (tangent = eigenvector of smaller eigenvalue)
+  const gx = new Float32Array(w * h);
+  const gy = new Float32Array(w * h);
+  const gmag = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const sxx = smoothed[i*3], sxy = smoothed[i*3+1], syy = smoothed[i*3+2];
+    // Eigenvalues of [[sxx,sxy],[sxy,syy]]
+    const tr = sxx + syy;
+    const det = sxx * syy - sxy * sxy;
+    const disc = Math.sqrt(Math.max(0, tr * tr * 0.25 - det));
+    const lam1 = tr * 0.5 + disc; // larger eigenvalue = gradient direction
+    // Eigenvector for lam1: [[sxx-lam1, sxy], [sxy, syy-lam1]] * v = 0
+    // v = (sxy, lam1 - sxx) or (lam1 - syy, sxy)
+    let ex = sxy, ey = lam1 - sxx;
+    const em = Math.sqrt(ex * ex + ey * ey);
+    if (em > 1e-8) { ex /= em; ey /= em; } else { ex = 1; ey = 0; }
+    gx[i] = ex; gy[i] = ey;
+    gmag[i] = Math.sqrt(lam1);
+  }
+  return { gx, gy, gmag };
+}
+
 // ─── Grid cell sampling ───────────────────────────────────────────────────────
 
 function chooseBestInCell(err, x0, y0, x1, y1, w) {
@@ -468,7 +511,7 @@ function paintify(imageData, params, onProgress, prevState) {
           impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
           frameDiffThreshold = 0,
           maskData = null, maskWidth = 0, maskHeight = 0,
-          paletteSize = 0, dryBrushAmount = 0 } = params;
+          paletteSize = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -520,7 +563,9 @@ function paintify(imageData, params, onProgress, prevState) {
 
     const refBlur = gaussianBlurRGB(srcRGB, w, h, sigma);
     const labRef = buildLabBuffer(refBlur, w, h);
-    const { gx, gy, gmag } = computeGradients(refBlur, w, h);
+    const { gx, gy, gmag } = tensorSigma > 0
+      ? computeGradientsST(refBlur, w, h, tensorSigma)
+      : computeGradients(refBlur, w, h);
     const labCanvas = buildLabBuffer(canvasRGB, w, h);
     const err = computeErrorMap(labRef, labCanvas, w, h);
 
