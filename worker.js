@@ -310,6 +310,56 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
   }
 }
 
+// ─── Palette quantization (k-means, fixed 20 iterations) ─────────────────────
+
+function buildPalette(srcRGB, w, h, k) {
+  if (k <= 0) return null;
+  k = Math.min(k, 32);
+
+  // Sample up to 2000 pixels for speed
+  const stride = Math.max(1, Math.floor(w * h / 2000));
+  const samples = [];
+  for (let i = 0; i < w * h; i += stride) {
+    samples.push([srcRGB[i*3], srcRGB[i*3+1], srcRGB[i*3+2]]);
+  }
+
+  // Initialise centroids by spreading through samples
+  const centroids = [];
+  const step = Math.max(1, Math.floor(samples.length / k));
+  for (let i = 0; i < k; i++) centroids.push([...samples[Math.min(i * step, samples.length - 1)]]);
+
+  for (let iter = 0; iter < 20; iter++) {
+    const sums = Array.from({length: k}, () => [0, 0, 0, 0]); // r,g,b,count
+    for (const [r, g, b] of samples) {
+      let best = 0, bestD = Infinity;
+      for (let ci = 0; ci < k; ci++) {
+        const dr = r - centroids[ci][0], dg = g - centroids[ci][1], db = b - centroids[ci][2];
+        const d = dr*dr + dg*dg + db*db;
+        if (d < bestD) { bestD = d; best = ci; }
+      }
+      sums[best][0] += r; sums[best][1] += g; sums[best][2] += b; sums[best][3]++;
+    }
+    for (let ci = 0; ci < k; ci++) {
+      if (sums[ci][3] > 0) {
+        centroids[ci][0] = sums[ci][0] / sums[ci][3];
+        centroids[ci][1] = sums[ci][1] / sums[ci][3];
+        centroids[ci][2] = sums[ci][2] / sums[ci][3];
+      }
+    }
+  }
+  return centroids;
+}
+
+function snapToPalette(r, g, b, palette) {
+  let best = 0, bestD = Infinity;
+  for (let ci = 0; ci < palette.length; ci++) {
+    const dr = r - palette[ci][0], dg = g - palette[ci][1], db = b - palette[ci][2];
+    const d = dr*dr + dg*dg + db*db;
+    if (d < bestD) { bestD = d; best = ci; }
+  }
+  return palette[best];
+}
+
 // ─── Downscale / upscale helpers ──────────────────────────────────────────────
 
 function downscaleRGBA(srcData, sw, sh, dw, dh) {
@@ -377,7 +427,8 @@ function paintify(imageData, params, onProgress, prevState) {
           hueJitter = 0, satJitter = 0, valJitter = 0,
           impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
           frameDiffThreshold = 0,
-          maskData = null, maskWidth = 0, maskHeight = 0 } = params;
+          maskData = null, maskWidth = 0, maskHeight = 0,
+          paletteSize = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -385,6 +436,7 @@ function paintify(imageData, params, onProgress, prevState) {
   const canvasRGB = new Float32Array(w * h * 3);
   const heightBuf = (impastoStrength > 0 || impastoLightStrength > 0)
     ? new Float32Array(w * h) : null;
+  const palette = paletteSize > 1 ? buildPalette(srcRGB, w, h, paletteSize) : null;
 
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
   // and build a per-pixel diff mask to skip unchanged cells.
@@ -473,7 +525,7 @@ function paintify(imageData, params, onProgress, prevState) {
         { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature }
       );
 
-      let strokeColor = color;
+      let strokeColor = palette ? snapToPalette(color[0], color[1], color[2], palette) : color;
       if (hueJitter > 0 || satJitter > 0 || valJitter > 0) {
         let [h2, s2, v2] = rgbToHsv(color[0], color[1], color[2]);
         h2 += (Math.random() * 2 - 1) * hueJitter;
