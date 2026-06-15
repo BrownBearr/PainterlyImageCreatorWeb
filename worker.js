@@ -346,7 +346,7 @@ function upscaleRGB(srcRGB, sw, sh, dw, dh) {
 
 // ─── Main paintify function ───────────────────────────────────────────────────
 
-function paintify(imageData, params, onProgress) {
+function paintify(imageData, params, onProgress, prevState) {
   let { width: origW, height: origH } = imageData;
   let srcData = imageData.data;
 
@@ -375,7 +375,8 @@ function paintify(imageData, params, onProgress) {
   const { brushRadii, threshold, maxStrokeLength, minStrokeLength,
           curvature, opacity, gridFactor, underpaintMode = 'average',
           hueJitter = 0, satJitter = 0, valJitter = 0,
-          impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0 } = params;
+          impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
+          frameDiffThreshold = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -384,7 +385,24 @@ function paintify(imageData, params, onProgress) {
   const heightBuf = (impastoStrength > 0 || impastoLightStrength > 0)
     ? new Float32Array(w * h) : null;
 
-  if (underpaintMode === 'blur') {
+  // Temporal coherence: when prevState is provided, seed canvas from previous frame
+  // and build a per-pixel diff mask to skip unchanged cells.
+  let cellDiffMap = null; // Float32Array(w * h) — max pixel diff per cell, built per layer
+  const useTemporal = prevState && frameDiffThreshold > 0
+    && prevState.prevCanvasRGB && prevState.prevSrcRGB
+    && prevState.prevCanvasRGB.length === w * h * 3
+    && prevState.prevSrcRGB.length === w * h * 3;
+
+  if (useTemporal) {
+    canvasRGB.set(prevState.prevCanvasRGB);
+    cellDiffMap = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const dr = Math.abs(srcRGB[i*3]   - prevState.prevSrcRGB[i*3]);
+      const dg = Math.abs(srcRGB[i*3+1] - prevState.prevSrcRGB[i*3+1]);
+      const db = Math.abs(srcRGB[i*3+2] - prevState.prevSrcRGB[i*3+2]);
+      cellDiffMap[i] = (dr + dg + db) / 3;
+    }
+  } else if (underpaintMode === 'blur') {
     // Blur the source at the coarsest radius and use that as the starting canvas
     const blurSigma = Math.max(0.1, (radii[0] ?? 8) * 0.5);
     const blurred = gaussianBlurRGB(srcRGB, w, h, blurSigma);
@@ -429,6 +447,15 @@ function paintify(imageData, params, onProgress) {
       const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w);
 
       if (meanErr <= threshold && !isFirstLayer) continue;
+
+      // Temporal coherence: skip cell if max source diff is below threshold
+      if (cellDiffMap) {
+        let maxDiff = 0;
+        for (let cy = cy0; cy < cy1; cy++)
+          for (let cx = cx0; cx < cx1; cx++)
+            if (cellDiffMap[cy * w + cx] > maxDiff) maxDiff = cellDiffMap[cy * w + cx];
+        if (maxDiff < frameDiffThreshold) continue;
+      }
 
       const { pts, color } = makeCurvedStroke(
         sx, sy, radius, refBlur, canvasRGB, gx, gy, gmag, w, h,
@@ -490,22 +517,33 @@ function paintify(imageData, params, onProgress) {
     }
   }
 
-  return { data: resultData, width: origW, height: origH };
+  const out = { data: resultData, width: origW, height: origH };
+  // Return raw buffers for temporal coherence (only when not fast-previewing,
+  // since the scaled canvas would be wrong dimensions for the next frame).
+  if (frameDiffThreshold > 0 && procW === origW && procH === origH) {
+    out.canvasRGB = canvasRGB;
+    out.srcRGB = srcRGB;
+  }
+  return out;
 }
 
 // ─── Worker message handler ───────────────────────────────────────────────────
 
 self.onmessage = function (e) {
-  const { type, imageData, params } = e.data;
+  const { type, imageData, params, prevState } = e.data;
   if (type !== 'render') return;
 
   try {
     const result = paintify(
       imageData,
       params,
-      (progress) => self.postMessage({ type: 'progress', value: progress })
+      (progress) => self.postMessage({ type: 'progress', value: progress }),
+      prevState || null
     );
-    self.postMessage({ type: 'done', result }, [result.data.buffer]);
+    const transfers = [result.data.buffer];
+    if (result.canvasRGB) transfers.push(result.canvasRGB.buffer);
+    if (result.srcRGB) transfers.push(result.srcRGB.buffer);
+    self.postMessage({ type: 'done', result }, transfers);
   } catch (err) {
     self.postMessage({ type: 'error', message: err.message });
   }

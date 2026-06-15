@@ -346,6 +346,7 @@ function getParams() {
     hueJitter:            parseFloat(document.getElementById('hue-jitter').value) || 0,
     satJitter:            parseFloat(document.getElementById('sat-jitter').value) || 0,
     valJitter:            parseFloat(document.getElementById('val-jitter').value) || 0,
+    frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     impastoStrength:      parseFloat(document.getElementById('impasto-strength').value) || 0,
     impastoLightStrength: parseFloat(document.getElementById('impasto-light').value) || 0,
     lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
@@ -507,7 +508,8 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
  ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
- ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val']]
+ ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
+ ['frame-diff','frame-diff-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
     if (!inp || !lbl) return;

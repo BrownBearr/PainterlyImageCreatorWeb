@@ -61,8 +61,13 @@
           <label>Output FPS <span class="val" id="video-fps-val">24</span></label>
           <input type="range" id="video-fps" min="1" max="60" value="24" step="1" />
         </div>
+        <div class="field">
+          <label>Frame diff threshold <span class="val" id="frame-diff-val">0</span></label>
+          <input type="range" id="frame-diff" min="0" max="50" value="0" step="1" />
+        </div>
         <p style="color:var(--muted); font-size:11px; line-height:1.5; margin-top:4px">
-          Output: WebM (VP8) if WebCodecs available, otherwise ZIP of PNG frames.
+          Output: WebM (VP8) if WebCodecs available, otherwise ZIP of PNG frames.<br>
+          Frame diff &gt; 0 enables temporal coherence: only repaint changed regions.
         </p>
       </div>
 

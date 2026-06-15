@@ -17,16 +17,18 @@ class PainterWorker {
     this._w.onerror = (e) => this._reject?.(e);
   }
 
-  render(imageData, params, onProgress) {
+  render(imageData, params, onProgress, prevState) {
     return new Promise((resolve, reject) => {
       this._resolve = resolve;
       this._reject = reject;
       this._onProgress = onProgress ?? null;
-      this._w.postMessage({
+      const msg = {
         type: 'render',
         imageData: { data: new Uint8ClampedArray(imageData.data), width: imageData.width, height: imageData.height },
         params,
-      });
+      };
+      if (prevState) msg.prevState = prevState;
+      this._w.postMessage(msg);
     });
   }
 
@@ -235,6 +237,8 @@ class VideoProcessor {
     // We seek to each target time and use requestVideoFrameCallback (when
     // available) to get the actual presented frame's mediaTime, avoiding the
     // keyframe-landing duplicate-frame problem that seek-only extraction causes.
+    let prevTemporalState = null; // { prevCanvasRGB, prevSrcRGB } for temporal coherence
+
     for (let i = 0; i < totalFrames; i++) {
       if (this._cancelled) break;
 
@@ -276,8 +280,15 @@ class VideoProcessor {
 
       const painted = await this._worker.render(frameData, params, (p) => {
         this._onFrameProgress(i, totalFrames, p);
-      });
+      }, prevTemporalState);
       if (this._cancelled) break;
+
+      // Update temporal state for next frame if the worker sent back raw buffers
+      if (painted.canvasRGB && painted.srcRGB) {
+        prevTemporalState = { prevCanvasRGB: painted.canvasRGB, prevSrcRGB: painted.srcRGB };
+      } else {
+        prevTemporalState = null;
+      }
 
       if (encoder) {
         const imgd = new ImageData(new Uint8ClampedArray(painted.data), painted.width, painted.height);
