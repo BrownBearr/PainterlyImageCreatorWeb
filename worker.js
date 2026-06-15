@@ -271,7 +271,7 @@ function drawCircle(mask, mw, mh, cx, cy, r) {
   }
 }
 
-function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h) {
+function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength) {
   if (pts.length < 2) return;
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -296,12 +296,16 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h) {
   const [sr, sg, sb] = color;
   for (let my = 0; my < mh; my++) {
     for (let mx = 0; mx < mw; mx++) {
-      const a = Math.min(1, mask[my * mw + mx] * opacity);
+      const mv = mask[my * mw + mx];
+      const a = Math.min(1, mv * opacity);
       if (a <= 0) continue;
       const ci = ((by0 + my) * w + (bx0 + mx)) * 3;
       canvasRGB[ci]     = canvasRGB[ci]     * (1 - a) + sr * a;
       canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + sg * a;
       canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + sb * a;
+      if (heightBuf && impastoStrength > 0) {
+        heightBuf[(by0 + my) * w + (bx0 + mx)] += mv * impastoStrength;
+      }
     }
   }
 }
@@ -370,12 +374,15 @@ function paintify(imageData, params, onProgress) {
 
   const { brushRadii, threshold, maxStrokeLength, minStrokeLength,
           curvature, opacity, gridFactor, underpaintMode = 'average',
-          hueJitter = 0, satJitter = 0, valJitter = 0 } = params;
+          hueJitter = 0, satJitter = 0, valJitter = 0,
+          impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
 
   const canvasRGB = new Float32Array(w * h * 3);
+  const heightBuf = (impastoStrength > 0 || impastoLightStrength > 0)
+    ? new Float32Array(w * h) : null;
 
   if (underpaintMode === 'blur') {
     // Blur the source at the coarsest radius and use that as the starting canvas
@@ -437,10 +444,36 @@ function paintify(imageData, params, onProgress) {
         strokeColor = hsvToRgb(h2, s2, v2);
       }
 
-      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h);
+      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength);
     }
 
     onProgress((ri + 1) / radii.length);
+  }
+
+  // Impasto lighting pass
+  if (heightBuf && impastoLightStrength > 0) {
+    const ambient = 0.6;
+    const angleRad = (lightAngle * Math.PI) / 180;
+    const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
+    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
+    const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const get = (xx, yy) => heightBuf[Math.max(0, Math.min(h - 1, yy)) * w + Math.max(0, Math.min(w - 1, xx))];
+        const dzdx = (get(x + 1, y) - get(x - 1, y)) * 0.5;
+        const dzdy = (get(x, y + 1) - get(x, y - 1)) * 0.5;
+        // Surface normal: (-dzdx, -dzdy, 1) normalized
+        const nx = -dzdx, ny = -dzdy, nz = 1.0;
+        const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const dot = Math.max(0, (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz);
+        const light = ambient + impastoLightStrength * dot;
+        const ci = (y * w + x) * 3;
+        canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
+        canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
+        canvasRGB[ci + 2] = Math.min(255, canvasRGB[ci + 2] * light);
+      }
+    }
   }
 
   // Return final ImageData (upscale if fast preview)

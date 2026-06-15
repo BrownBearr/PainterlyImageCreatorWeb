@@ -343,10 +343,13 @@ function getParams() {
     curvature:       parseFloat(document.getElementById('curvature').value) ?? 1.0,
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
-    hueJitter:       parseFloat(document.getElementById('hue-jitter').value) || 0,
-    satJitter:       parseFloat(document.getElementById('sat-jitter').value) || 0,
-    valJitter:       parseFloat(document.getElementById('val-jitter').value) || 0,
-    fastPreview:     document.getElementById('fast-preview').checked,
+    hueJitter:            parseFloat(document.getElementById('hue-jitter').value) || 0,
+    satJitter:            parseFloat(document.getElementById('sat-jitter').value) || 0,
+    valJitter:            parseFloat(document.getElementById('val-jitter').value) || 0,
+    impastoStrength:      parseFloat(document.getElementById('impasto-strength').value) || 0,
+    impastoLightStrength: parseFloat(document.getElementById('impasto-light').value) || 0,
+    lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
+    fastPreview:          document.getElementById('fast-preview').checked,
     underpaintMode:  document.getElementById('underpaint-mode').value,
   };
 }
@@ -503,7 +506,8 @@ function setStatus(msg) { statusText.textContent = msg; }
 [['threshold','threshold-val'], ['curvature','curvature-val'], ['opacity','opacity-val'],
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
- ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val']]
+ ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
+ ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
     if (!inp || !lbl) return;
@@ -523,7 +527,7 @@ document.getElementById('preset-select').addEventListener('change', (e) => {
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
  'threshold', 'grid-factor', 'opacity', 'hue-jitter', 'sat-jitter', 'val-jitter',
- 'underpaint-mode', 'fast-preview']
+ 'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
