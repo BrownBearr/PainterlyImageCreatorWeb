@@ -368,6 +368,7 @@ function getParams() {
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
     paletteSize:          parseInt(document.getElementById('palette-size').value, 10) || 0,
+    dryBrushAmount:       parseFloat(document.getElementById('dry-brush').value) || 0,
     hueJitter:            parseFloat(document.getElementById('hue-jitter').value) || 0,
     satJitter:            parseFloat(document.getElementById('sat-jitter').value) || 0,
     valJitter:            parseFloat(document.getElementById('val-jitter').value) || 0,
@@ -536,7 +537,7 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
  ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
- ['palette-size','palette-size-val'],
+ ['palette-size','palette-size-val'], ['dry-brush','dry-brush-val'],
  ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
  ['frame-diff','frame-diff-val']]
   .forEach(([id, labelId]) => {
@@ -557,7 +558,7 @@ document.getElementById('preset-select').addEventListener('change', (e) => {
 
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
- 'threshold', 'grid-factor', 'opacity', 'palette-size',
+ 'threshold', 'grid-factor', 'opacity', 'palette-size', 'dry-brush',
  'hue-jitter', 'sat-jitter', 'val-jitter',
  'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
   .forEach(id => {

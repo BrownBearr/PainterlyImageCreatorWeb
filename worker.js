@@ -271,9 +271,50 @@ function drawCircle(mask, mw, mh, cx, cy, r) {
   }
 }
 
-function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength) {
+function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount) {
   if (pts.length < 2) return;
+  const [sr, sg, sb] = color;
+  const nSegs = pts.length - 1;
 
+  // When dry-brush is active, composite each segment separately with a fading opacity.
+  // Otherwise build a single unified mask (original behaviour, cheaper).
+  if (dryBrushAmount > 0) {
+    for (let seg = 0; seg < nSegs; seg++) {
+      const t = nSegs > 1 ? seg / (nSegs - 1) : 0;
+      const segOpacity = Math.max(0, opacity * (1 - dryBrushAmount * t));
+      if (segOpacity <= 0) continue;
+
+      const segPts = [pts[seg], pts[seg + 1]];
+      const sx0 = segPts[0][0], sy0 = segPts[0][1];
+      const sx1 = segPts[1][0], sy1 = segPts[1][1];
+      const pad = Math.ceil(radius) + 2;
+      const bx0 = Math.max(0, Math.min(sx0, sx1) - pad);
+      const by0 = Math.max(0, Math.min(sy0, sy1) - pad);
+      const bx1 = Math.min(w, Math.max(sx0, sx1) + pad + 1);
+      const by1 = Math.min(h, Math.max(sy0, sy1) + pad + 1);
+      if (bx1 <= bx0 || by1 <= by0) continue;
+      const mw = bx1 - bx0, mh = by1 - by0;
+      const mask = new Float32Array(mw * mh);
+      drawThickSegment(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius);
+      if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, radius);
+      if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, radius);
+      for (let my = 0; my < mh; my++) {
+        for (let mx = 0; mx < mw; mx++) {
+          const mv = mask[my * mw + mx];
+          const a = Math.min(1, mv * segOpacity);
+          if (a <= 0) continue;
+          const ci = ((by0 + my) * w + (bx0 + mx)) * 3;
+          canvasRGB[ci]     = canvasRGB[ci]     * (1 - a) + sr * a;
+          canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + sg * a;
+          canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + sb * a;
+          if (heightBuf && impastoStrength > 0) heightBuf[(by0+my)*w+(bx0+mx)] += mv * impastoStrength;
+        }
+      }
+    }
+    return;
+  }
+
+  // Standard path: single unified mask
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const [px, py] of pts) {
     if (px < minX) minX = px; if (px > maxX) maxX = px;
@@ -287,13 +328,12 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
   const mw = bx1 - bx0, mh = by1 - by0;
   const mask = new Float32Array(mw * mh);
 
-  for (let seg = 0; seg < pts.length - 1; seg++) {
+  for (let seg = 0; seg < nSegs; seg++) {
     drawThickSegment(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius);
   }
   drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, radius);
   drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, radius);
 
-  const [sr, sg, sb] = color;
   for (let my = 0; my < mh; my++) {
     for (let mx = 0; mx < mw; mx++) {
       const mv = mask[my * mw + mx];
@@ -428,7 +468,7 @@ function paintify(imageData, params, onProgress, prevState) {
           impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
           frameDiffThreshold = 0,
           maskData = null, maskWidth = 0, maskHeight = 0,
-          paletteSize = 0 } = params;
+          paletteSize = 0, dryBrushAmount = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -534,7 +574,7 @@ function paintify(imageData, params, onProgress, prevState) {
         strokeColor = hsvToRgb(h2, s2, v2);
       }
 
-      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength);
+      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount);
     }
 
     onProgress((ri + 1) / radii.length);
