@@ -1,20 +1,8 @@
 'use strict';
 
-// ─── Seeded RNG (mulberry32) ──────────────────────────────────────────────────
-
-function makeRng(seed) {
-  let s = seed >>> 0;
-  return function () {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffleArray(arr, rng) {
+function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
+    const j = Math.floor(Math.random() * (i + 1));
     const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
   }
 }
@@ -144,13 +132,13 @@ function computeGradients(rgbF32, w, h) {
 
 // ─── Grid cell sampling ───────────────────────────────────────────────────────
 
-function chooseBestInCell(err, x0, y0, x1, y1, w, rng) {
+function chooseBestInCell(err, x0, y0, x1, y1, w) {
   let bestVal = -1, bestX = x0, bestY = y0, sum = 0, count = 0;
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const e = err[y * w + x];
       sum += e; count++;
-      const jittered = e + rng() * 1e-3;
+      const jittered = e + Math.random() * 1e-3;
       if (jittered > bestVal) { bestVal = jittered; bestX = x; bestY = y; }
     }
   }
@@ -290,60 +278,6 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h) {
   }
 }
 
-// ─── Stroke rendering: textured ───────────────────────────────────────────────
-
-function sampleTexBilinear(data, tw, th, u, v) {
-  u = Math.max(0, Math.min(1, u)); v = Math.max(0, Math.min(1, v));
-  const px = u * (tw - 1), py = v * (th - 1);
-  const x0 = Math.floor(px), y0 = Math.floor(py);
-  const x1 = Math.min(tw - 1, x0 + 1), y1 = Math.min(th - 1, y0 + 1);
-  const fx = px - x0, fy = py - y0;
-  const s = (xi, yi, ch) => data[(yi * tw + xi) * 4 + ch] / 255;
-  const interp = (ch) =>
-    s(x0,y0,ch)*(1-fx)*(1-fy) + s(x1,y0,ch)*fx*(1-fy) +
-    s(x0,y1,ch)*(1-fx)*fy   + s(x1,y1,ch)*fx*fy;
-  const r = interp(0), g = interp(1), b = interp(2);
-  return { cov: 0.299*r + 0.587*g + 0.114*b, alpha: interp(3) };
-}
-
-function renderStrokeTextured(canvasRGB, pts, radius, color, opacity, texData, tw, th, w, h) {
-  if (pts.length < 2) return;
-  const d = Math.max(3, Math.round(2 * radius));
-  const half = d / 2;
-
-  for (let seg = 0; seg < pts.length - 1; seg++) {
-    const [xa, ya] = pts[seg];
-    const [xb, yb] = pts[seg + 1];
-    const dx = xb - xa, dy = yb - ya;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 1e-6) continue;
-    const cosA = dx / len, sinA = dy / len;
-
-    for (let sy = 0; sy < d; sy++) {
-      for (let sx = 0; sx < d; sx++) {
-        const lx = sx - half, ly = sy - half;
-        // Rotate local coords back to texture UV
-        const tu = ( cosA * lx + sinA * ly) / d + 0.5;
-        const tv = (-sinA * lx + cosA * ly) / d + 0.5;
-
-        const px = Math.round(xa - half + sx);
-        const py = Math.round(ya - half + sy);
-        if (px < 0 || py < 0 || px >= w || py >= h) continue;
-
-        const { cov, alpha: ta } = sampleTexBilinear(texData, tw, th, tu, tv);
-        const mod = 0.15 + 0.85 * cov;
-        const a = Math.min(1, ta * opacity);
-        if (a <= 0) continue;
-
-        const ci = (py * w + px) * 3;
-        canvasRGB[ci]     = canvasRGB[ci]     * (1 - a) + color[0] * mod * a;
-        canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + color[1] * mod * a;
-        canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + color[2] * mod * a;
-      }
-    }
-  }
-}
-
 // ─── Downscale / upscale helpers ──────────────────────────────────────────────
 
 function downscaleRGBA(srcData, sw, sh, dw, dh) {
@@ -380,7 +314,7 @@ function upscaleRGB(srcRGB, sw, sh, dw, dh) {
 
 // ─── Main paintify function ───────────────────────────────────────────────────
 
-function paintify(imageData, params, texImageData, onProgress) {
+function paintify(imageData, params, onProgress) {
   let { width: origW, height: origH } = imageData;
   let srcData = imageData.data;
 
@@ -407,12 +341,10 @@ function paintify(imageData, params, texImageData, onProgress) {
   }
 
   const { brushRadii, threshold, maxStrokeLength, minStrokeLength,
-          curvature, opacity, gridFactor, seed, underpaintMode = 'average' } = params;
+          curvature, opacity, gridFactor, underpaintMode = 'average' } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
-
-  const rng = makeRng(seed != null ? seed : 42);
 
   const canvasRGB = new Float32Array(w * h * 3);
 
@@ -435,11 +367,6 @@ function paintify(imageData, params, texImageData, onProgress) {
     }
   }
 
-  const hasTex = texImageData != null;
-  const texData = hasTex ? texImageData.data : null;
-  const tw = hasTex ? texImageData.width : 0;
-  const th = hasTex ? texImageData.height : 0;
-
   for (let ri = 0; ri < radii.length; ri++) {
     const radius = Math.max(1, Math.round(radii[ri]));
     const sigma = Math.max(0.1, radius * 0.5);
@@ -457,13 +384,13 @@ function paintify(imageData, params, texImageData, onProgress) {
         cells.push([x0, y0]);
       }
     }
-    shuffleArray(cells, rng);
+    shuffleArray(cells);
 
     const isFirstLayer = ri === 0;
 
     for (const [cx0, cy0] of cells) {
       const cx1 = Math.min(w, cx0 + grid), cy1 = Math.min(h, cy0 + grid);
-      const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w, rng);
+      const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w);
 
       if (meanErr <= threshold && !isFirstLayer) continue;
 
@@ -472,11 +399,7 @@ function paintify(imageData, params, texImageData, onProgress) {
         { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature }
       );
 
-      if (hasTex) {
-        renderStrokeTextured(canvasRGB, pts, radius, color, opacity, texData, tw, th, w, h);
-      } else {
-        renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h);
-      }
+      renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h);
     }
 
     onProgress((ri + 1) / radii.length);
@@ -502,14 +425,13 @@ function paintify(imageData, params, texImageData, onProgress) {
 // ─── Worker message handler ───────────────────────────────────────────────────
 
 self.onmessage = function (e) {
-  const { type, imageData, texImageData, params } = e.data;
+  const { type, imageData, params } = e.data;
   if (type !== 'render') return;
 
   try {
     const result = paintify(
       imageData,
       params,
-      texImageData || null,
       (progress) => self.postMessage({ type: 'progress', value: progress })
     );
     self.postMessage({ type: 'done', result }, [result.data.buffer]);

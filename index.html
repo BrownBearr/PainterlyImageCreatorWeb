@@ -148,11 +148,6 @@
       </div>
 
       <div class="field">
-        <label>Seed</label>
-        <input type="number" id="seed" value="0" min="0" max="9999999" />
-      </div>
-
-      <div class="field">
         <label>Underpainting</label>
         <select id="underpaint-mode">
           <option value="blur">Blurred image</option>
@@ -165,21 +160,6 @@
         <input type="checkbox" id="fast-preview" />
         Fast preview (downscale to 400px, then upscale)
       </label>
-    </div>
-
-    <!-- Brush texture -->
-    <div class="sidebar-section">
-      <h2>Brush Texture (optional)</h2>
-      <div class="tex-row">
-        <label class="file-btn" for="tex-input">Upload…</label>
-        <input type="file" id="tex-input" accept="image/*" style="display:none" />
-        <span id="tex-label">No texture loaded</span>
-        <button id="clear-tex" class="clear-link">clear</button>
-      </div>
-      <p style="margin-top:8px; color:#666; font-size:11px; line-height:1.5">
-        White pixels = paint, black pixels = transparent.<br>
-        Brush alpha channel is used if present.
-      </p>
     </div>
 
     <!-- Actions -->

@@ -17,7 +17,7 @@ class PainterWorker {
     this._w.onerror = (e) => this._reject?.(e);
   }
 
-  render(imageData, params, texImageData, onProgress) {
+  render(imageData, params, onProgress) {
     return new Promise((resolve, reject) => {
       this._resolve = resolve;
       this._reject = reject;
@@ -25,9 +25,6 @@ class PainterWorker {
       this._w.postMessage({
         type: 'render',
         imageData: { data: new Uint8ClampedArray(imageData.data), width: imageData.width, height: imageData.height },
-        texImageData: texImageData
-          ? { data: new Uint8ClampedArray(texImageData.data), width: texImageData.width, height: texImageData.height }
-          : null,
         params,
       });
     });
@@ -165,7 +162,7 @@ class VideoProcessor {
     this._worker = null;
   }
 
-  async process(videoFile, params, texImageData, fps) {
+  async process(videoFile, params, fps) {
     this._cancelled = false;
 
     // ── 1. Load video metadata ─────────────────────────────────────────────
@@ -277,7 +274,7 @@ class VideoProcessor {
       octx.drawImage(videoEl, 0, 0);
       const frameData = octx.getImageData(0, 0, vw, vh);
 
-      const painted = await this._worker.render(frameData, params, texImageData, (p) => {
+      const painted = await this._worker.render(frameData, params, (p) => {
         this._onFrameProgress(i, totalFrames, p);
       });
       if (this._cancelled) break;
@@ -339,7 +336,7 @@ class BatchProcessor {
     this._worker = null;
   }
 
-  async process(files, params, texImageData) {
+  async process(files, params) {
     this._cancelled = false;
     this._worker = new PainterWorker();
 
@@ -382,7 +379,7 @@ class BatchProcessor {
       const imgData = await loadFileAsImageData(file);
       if (!imgData) { this._onStatus(`Skipping ${file.name} — not a valid image.`); continue; }
 
-      const painted = await this._worker.render(imgData, params, texImageData, (p) => {
+      const painted = await this._worker.render(imgData, params, (p) => {
         this._onFrameProgress(i, total, p);
       });
       if (this._cancelled) break;

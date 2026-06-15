@@ -9,7 +9,6 @@ let batchProcessor = null;
 let isRendering = false;
 
 let sourceImageData = null;
-let texImageData    = null;
 let videoFile       = null;
 let batchFiles      = [];
 let resultBlob      = null;
@@ -23,8 +22,6 @@ const videoInput     = document.getElementById('video-input');
 const videoInfo      = document.getElementById('video-info');
 const batchInput     = document.getElementById('batch-input');
 const batchInfo      = document.getElementById('batch-info');
-const texInput       = document.getElementById('tex-input');
-const texLabel       = document.getElementById('tex-label');
 const canvas         = document.getElementById('output-canvas');
 const ctx            = canvas.getContext('2d');
 const renderBtn      = document.getElementById('render-btn');
@@ -44,7 +41,7 @@ const modeTabs       = document.querySelectorAll('.mode-tab');
 // Edit values here to tune each preset. TODO: tune values
 
 const PRESETS = {
-  hertzmann: { // TODO: tune values — canonical 1998 paper defaults
+  hertzmann: { // canonical 1998 paper defaults
     brushRadii: '8, 4, 2',
     maxStrokeLength: 16,
     minStrokeLength: 4,
@@ -54,9 +51,8 @@ const PRESETS = {
     opacity: 0.9,
     underpaintMode: 'blur',
     fastPreview: false,
-    seed: 0,
   },
-  loose: { // TODO: tune values — broad strokes, less detail
+  loose: { // broad strokes, less detail
     brushRadii: '16, 8',
     maxStrokeLength: 24,
     minStrokeLength: 8,
@@ -66,9 +62,8 @@ const PRESETS = {
     opacity: 0.85,
     underpaintMode: 'blur',
     fastPreview: false,
-    seed: 0,
   },
-  detailed: { // TODO: tune values — tight, controlled, high fidelity
+  detailed: { // tight, controlled, high fidelity
     brushRadii: '8, 4, 2, 1',
     maxStrokeLength: 12,
     minStrokeLength: 2,
@@ -78,9 +73,8 @@ const PRESETS = {
     opacity: 0.95,
     underpaintMode: 'blur',
     fastPreview: false,
-    seed: 0,
   },
-  sketchy: { // TODO: tune values — gestural, low opacity, short strokes
+  sketchy: { // gestural, low opacity, short strokes
     brushRadii: '6, 3',
     maxStrokeLength: 8,
     minStrokeLength: 2,
@@ -90,7 +84,6 @@ const PRESETS = {
     opacity: 0.6,
     underpaintMode: 'none',
     fastPreview: false,
-    seed: 0,
   },
 };
 
@@ -117,7 +110,6 @@ function applyPreset(key) {
   setSlider('opacity', p.opacity);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
-  document.getElementById('seed').value = p.seed;
   _applyingPreset = false;
 }
 
@@ -175,20 +167,6 @@ function loadImageFile(file) {
     downloadBtn.disabled = true;
     updateButtonStates();
     setStatus(`Image: ${img.naturalWidth}×${img.naturalHeight}px`);
-    URL.revokeObjectURL(url);
-  };
-  img.src = url;
-}
-
-function loadTexFile(file) {
-  if (!file?.type.startsWith('image/')) return;
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    const off = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
-    off.getContext('2d').drawImage(img, 0, 0);
-    texImageData = off.getContext('2d').getImageData(0, 0, img.naturalWidth, img.naturalHeight);
-    texLabel.textContent = `${file.name} (${img.naturalWidth}×${img.naturalHeight})`;
     URL.revokeObjectURL(url);
   };
   img.src = url;
@@ -361,13 +339,6 @@ videoInput.addEventListener('change', () => loadVideoFile(videoInput.files[0]));
 
 batchInput.addEventListener('change', () => loadBatchFiles(batchInput.files));
 
-// ─── Texture ─────────────────────────────────────────────────────────────────
-
-texInput.addEventListener('change', () => loadTexFile(texInput.files[0]));
-document.getElementById('clear-tex').addEventListener('click', () => {
-  texImageData = null; texInput.value = ''; texLabel.textContent = 'No texture loaded';
-});
-
 // ─── Parameter reading ────────────────────────────────────────────────────────
 
 function getParams() {
@@ -382,7 +353,6 @@ function getParams() {
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
     fastPreview:     document.getElementById('fast-preview').checked,
-    seed:            parseInt(document.getElementById('seed').value, 10) || 0,
     underpaintMode:  document.getElementById('underpaint-mode').value,
   };
 }
@@ -425,9 +395,6 @@ function startImageRender() {
   worker.postMessage({
     type: 'render',
     imageData: { data: new Uint8ClampedArray(id.data), width: id.width, height: id.height },
-    texImageData: texImageData
-      ? { data: new Uint8ClampedArray(texImageData.data), width: texImageData.width, height: texImageData.height }
-      : null,
     params: getParams(),
   });
 }
@@ -455,7 +422,7 @@ async function startVideoProcess() {
   });
 
   try {
-    await videoProcessor.process(videoFile, getParams(), texImageData, fps);
+    await videoProcessor.process(videoFile, getParams(), fps);
   } catch (err) {
     setStatus('Error: ' + err.message);
   }
@@ -482,7 +449,7 @@ async function startBatchProcess() {
   });
 
   try {
-    await batchProcessor.process(batchFiles, getParams(), texImageData);
+    await batchProcessor.process(batchFiles, getParams());
   } catch (err) {
     setStatus('Error: ' + err.message);
   }
@@ -561,7 +528,7 @@ document.getElementById('preset-select').addEventListener('change', (e) => {
 
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
- 'threshold', 'grid-factor', 'opacity', 'seed', 'underpaint-mode', 'fast-preview']
+ 'threshold', 'grid-factor', 'opacity', 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
