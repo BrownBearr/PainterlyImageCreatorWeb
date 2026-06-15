@@ -121,10 +121,66 @@ The alpha value of each stroke as it blends onto the canvas. Lower opacity lets 
 
 ---
 
-#### Seed
-**Default:** 0
+#### Hue jitter
+**Range:** 0.0 – 1.0 &emsp; **Default:** 0
 
-Integer seed for the random number generator. The grid shuffle and stroke jitter are both seeded, so the same seed always produces the same painting. Change the seed to get a different arrangement of strokes from identical parameters.
+Per-stroke random offset applied to the stroke's hue. At 1.0 the hue can shift up to ±180°. Adds natural colour variation across strokes — visible at values as low as 0.05.
+
+---
+
+#### Saturation jitter
+**Range:** 0.0 – 1.0 &emsp; **Default:** 0
+
+Per-stroke random offset applied to the stroke's saturation. At 1.0 the saturation can shift by ±100%. Combine with hue jitter for full chromatic variation.
+
+---
+
+#### Value jitter
+**Range:** 0.0 – 1.0 &emsp; **Default:** 0
+
+Per-stroke random offset applied to the stroke's brightness. Adds light/dark variation across strokes without changing hue or saturation.
+
+---
+
+#### Palette size
+**Range:** 0 – 32 &emsp; **Default:** 0 (off)
+
+When greater than 1, stroke colours are snapped to a palette of N colours derived from the source image via k-means clustering. Produces a flat, posterised or screen-print quality. Higher values allow more colour nuance.
+
+---
+
+#### Dry-brush falloff
+**Range:** 0.0 – 1.0 &emsp; **Default:** 0 (off)
+
+Opacity decreases along the stroke from head to tail by this amount. At 1.0 the tail is fully transparent. Simulates a brush running out of paint mid-stroke.
+
+---
+
+#### Direction smoothing σ
+**Range:** 0 – 10 &emsp; **Default:** 0 (off)
+
+When greater than 0, replaces the raw per-pixel Sobel gradient with a direction field derived from the structure tensor (Gaussian-smoothed gradient products). Higher values produce smoother, more coherent stroke flow across regions with ambiguous edges. Costs one extra Gaussian blur pass per layer.
+
+---
+
+#### Impasto strength
+**Range:** 0.0 – 2.0 &emsp; **Default:** 0 (off)
+
+Controls how much each stroke adds to the height buffer used for impasto lighting. At 0 the height buffer is not computed. Raise together with **Impasto light strength** to see an effect — raised stroke edges will catch light.
+
+---
+
+#### Impasto light strength
+**Range:** 0.0 – 2.0 &emsp; **Default:** 0 (off)
+
+Scales the directional lighting applied to the height map after painting. At 0 the lighting pass is skipped. At 1.0 the effect is strong — stroke edges facing the light angle are brightened, those facing away are darkened. The ambient term is fixed at 0.6 so shadowed areas never go fully black.
+
+---
+
+#### Light angle (°)
+**Range:** 0 – 360 &emsp; **Default:** 45
+
+The azimuth of the directional light used for impasto lighting, in degrees. 0° = right, 90° = up, 180° = left, 270° = down. Only affects the image when **Impasto light strength > 0**.
 
 ---
 
@@ -148,15 +204,46 @@ When enabled, the image is downscaled to a maximum of 400 px on either side befo
 
 ---
 
-### Brush Texture (optional)
+### Presets
 
-Upload a PNG or JPEG to use as the brush stamp shape.
+The **Preset** dropdown sets all parameters at once. Four built-in presets are provided:
 
-- **White pixels** → paint is applied
-- **Black pixels** → transparent (no paint)
-- If the image has an alpha channel, that is used directly for coverage
+| Preset | Character |
+|---|---|
+| **Impressionist** | Curved medium strokes, subtle colour jitter — Monet / Renoir |
+| **Expressionist** | Long bold strokes, strong colour distortion — van Gogh / Munch |
+| **Pointillist** | Very short dabs on a fine grid, no curvature — Seurat / Signac |
+| **Wash** | Large translucent strokes with high colour jitter — loose watercolour |
 
-The texture is resized to match the current brush radius and stamped along each stroke, rotated to follow the stroke direction. Without a texture, strokes are solid anti-aliased rounded rectangles.
+Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
+
+---
+
+### Detail Mask (optional, Image mode)
+
+Upload a grayscale PNG or JPEG to locally modulate the error threshold T.
+
+- **White pixels** → effective T approaches 0, so nearly every cell gets a stroke (maximum detail)
+- **Black pixels** → T is unchanged (normal behaviour)
+- Intermediate greys scale linearly between the two
+
+Use this to force fine detail in faces or focal points while leaving the background loose. A future saliency pass could populate the same mask buffer automatically.
+
+---
+
+### Video Options
+
+#### Output FPS
+**Range:** 1 – 60 &emsp; **Default:** 24
+
+Frames per second of the output video. Higher values produce smoother motion but increase render time proportionally.
+
+---
+
+#### Frame diff threshold
+**Range:** 0 – 50 &emsp; **Default:** 0 (off)
+
+When greater than 0, enables temporal coherence: the previous frame's painted canvas is reused as the starting point for the current frame, and only grid cells where the source video changed by more than this amount (average RGB channel difference) are repainted. Unchanged regions keep their existing strokes, eliminating most inter-frame flicker. Raise the value to keep more of the previous frame; lower it to repaint more aggressively on subtle motion.
 
 ---
 
