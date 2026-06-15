@@ -60,7 +60,35 @@ function gaussianBlurRGB(src, w, h, sigma) {
   return out;
 }
 
-// ─── Color space (matches OpenCV uint8 Lab encoding) ─────────────────────────
+// ─── Color space ─────────────────────────────────────────────────────────────
+
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  const s = max === 0 ? 0 : d / max, v = max;
+  if (d > 0) {
+    if (max === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else                h = ((r - g) / d + 4) / 6;
+  }
+  return [h, s, v];
+}
+
+function hsvToRgb(h, s, v) {
+  h = ((h % 1) + 1) % 1;
+  const i = Math.floor(h * 6), f = h * 6 - i;
+  const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  let r, g, b;
+  switch (i % 6) {
+    case 0: r = v; g = t; b = p; break; case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break; case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break; default: r = v; g = p; b = q;
+  }
+  return [r * 255, g * 255, b * 255];
+}
+
+// ─── Lab (matches OpenCV uint8 Lab encoding) ──────────────────────────────────
 
 function rgbToLab(r, g, b) {
   // sRGB [0..255] -> linear
@@ -341,7 +369,8 @@ function paintify(imageData, params, onProgress) {
   }
 
   const { brushRadii, threshold, maxStrokeLength, minStrokeLength,
-          curvature, opacity, gridFactor, underpaintMode = 'average' } = params;
+          curvature, opacity, gridFactor, underpaintMode = 'average',
+          hueJitter = 0, satJitter = 0, valJitter = 0 } = params;
 
   const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
   if (radii.length === 0) radii.push(4);
@@ -399,7 +428,16 @@ function paintify(imageData, params, onProgress) {
         { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature }
       );
 
-      renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h);
+      let strokeColor = color;
+      if (hueJitter > 0 || satJitter > 0 || valJitter > 0) {
+        let [h2, s2, v2] = rgbToHsv(color[0], color[1], color[2]);
+        h2 += (Math.random() * 2 - 1) * hueJitter;
+        s2 = Math.max(0, Math.min(1, s2 + (Math.random() * 2 - 1) * satJitter));
+        v2 = Math.max(0, Math.min(1, v2 + (Math.random() * 2 - 1) * valJitter));
+        strokeColor = hsvToRgb(h2, s2, v2);
+      }
+
+      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h);
     }
 
     onProgress((ri + 1) / radii.length);

@@ -43,47 +43,31 @@ const modeTabs       = document.querySelectorAll('.mode-tab');
 const PRESETS = {
   hertzmann: { // canonical 1998 paper defaults
     brushRadii: '8, 4, 2',
-    maxStrokeLength: 16,
-    minStrokeLength: 4,
-    curvature: 1.0,
-    threshold: 50,
-    gridFactor: 1.0,
-    opacity: 0.9,
-    underpaintMode: 'blur',
-    fastPreview: false,
+    maxStrokeLength: 16, minStrokeLength: 4,
+    curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
+    hueJitter: 0, satJitter: 0, valJitter: 0,
+    underpaintMode: 'blur', fastPreview: false,
   },
   loose: { // broad strokes, less detail
     brushRadii: '16, 8',
-    maxStrokeLength: 24,
-    minStrokeLength: 8,
-    curvature: 0.85,
-    threshold: 100,
-    gridFactor: 1.5,
-    opacity: 0.85,
-    underpaintMode: 'blur',
-    fastPreview: false,
+    maxStrokeLength: 24, minStrokeLength: 8,
+    curvature: 0.85, threshold: 100, gridFactor: 1.5, opacity: 0.85,
+    hueJitter: 0, satJitter: 0, valJitter: 0,
+    underpaintMode: 'blur', fastPreview: false,
   },
   detailed: { // tight, controlled, high fidelity
     brushRadii: '8, 4, 2, 1',
-    maxStrokeLength: 12,
-    minStrokeLength: 2,
-    curvature: 1.0,
-    threshold: 25,
-    gridFactor: 0.75,
-    opacity: 0.95,
-    underpaintMode: 'blur',
-    fastPreview: false,
+    maxStrokeLength: 12, minStrokeLength: 2,
+    curvature: 1.0, threshold: 25, gridFactor: 0.75, opacity: 0.95,
+    hueJitter: 0, satJitter: 0, valJitter: 0,
+    underpaintMode: 'blur', fastPreview: false,
   },
   sketchy: { // gestural, low opacity, short strokes
     brushRadii: '6, 3',
-    maxStrokeLength: 8,
-    minStrokeLength: 2,
-    curvature: 1.0,
-    threshold: 60,
-    gridFactor: 1.25,
-    opacity: 0.6,
-    underpaintMode: 'none',
-    fastPreview: false,
+    maxStrokeLength: 8, minStrokeLength: 2,
+    curvature: 1.0, threshold: 60, gridFactor: 1.25, opacity: 0.6,
+    hueJitter: 0, satJitter: 0, valJitter: 0,
+    underpaintMode: 'none', fastPreview: false,
   },
 };
 
@@ -108,6 +92,9 @@ function applyPreset(key) {
   setSlider('threshold', p.threshold);
   setSlider('grid-factor', p.gridFactor);
   setSlider('opacity', p.opacity);
+  setSlider('hue-jitter', p.hueJitter ?? 0);
+  setSlider('sat-jitter', p.satJitter ?? 0);
+  setSlider('val-jitter', p.valJitter ?? 0);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
   _applyingPreset = false;
@@ -352,6 +339,9 @@ function getParams() {
     curvature:       parseFloat(document.getElementById('curvature').value) ?? 1.0,
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
+    hueJitter:       parseFloat(document.getElementById('hue-jitter').value) || 0,
+    satJitter:       parseFloat(document.getElementById('sat-jitter').value) || 0,
+    valJitter:       parseFloat(document.getElementById('val-jitter').value) || 0,
     fastPreview:     document.getElementById('fast-preview').checked,
     underpaintMode:  document.getElementById('underpaint-mode').value,
   };
@@ -508,7 +498,8 @@ function setStatus(msg) { statusText.textContent = msg; }
 
 [['threshold','threshold-val'], ['curvature','curvature-val'], ['opacity','opacity-val'],
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
- ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val']]
+ ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
+ ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
     if (!inp || !lbl) return;
@@ -528,7 +519,8 @@ document.getElementById('preset-select').addEventListener('change', (e) => {
 
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
- 'threshold', 'grid-factor', 'opacity', 'underpaint-mode', 'fast-preview']
+ 'threshold', 'grid-factor', 'opacity', 'hue-jitter', 'sat-jitter', 'val-jitter',
+ 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
