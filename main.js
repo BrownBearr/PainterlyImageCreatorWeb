@@ -38,36 +38,40 @@ const placeholder    = document.getElementById('placeholder');
 const modeTabs       = document.querySelectorAll('.mode-tab');
 
 // ─── Presets ──────────────────────────────────────────────────────────────────
-// Edit values here to tune each preset. TODO: tune values
+// Edit values here to tune each preset.
 
 const PRESETS = {
-  hertzmann: { // canonical 1998 paper defaults
+  impressionist: {
+    // Curved medium strokes, moderate jitter — classic Monet/Renoir feel
     brushRadii: '8, 4, 2',
     maxStrokeLength: 16, minStrokeLength: 4,
     curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
-    hueJitter: 0, satJitter: 0, valJitter: 0,
+    hueJitter: 0.05, satJitter: 0.1, valJitter: 0.1,
     underpaintMode: 'blur', fastPreview: false,
   },
-  loose: { // broad strokes, less detail
-    brushRadii: '16, 8',
-    maxStrokeLength: 24, minStrokeLength: 8,
-    curvature: 0.85, threshold: 100, gridFactor: 1.5, opacity: 0.85,
-    hueJitter: 0, satJitter: 0, valJitter: 0,
+  expressionist: {
+    // Long, bold, highly curved strokes with strong color distortion — van Gogh / Munch
+    brushRadii: '12, 6, 3',
+    maxStrokeLength: 28, minStrokeLength: 8,
+    curvature: 1.0, threshold: 40, gridFactor: 0.9, opacity: 0.95,
+    hueJitter: 0.15, satJitter: 0.2, valJitter: 0.15,
     underpaintMode: 'blur', fastPreview: false,
   },
-  detailed: { // tight, controlled, high fidelity
-    brushRadii: '8, 4, 2, 1',
-    maxStrokeLength: 12, minStrokeLength: 2,
-    curvature: 1.0, threshold: 25, gridFactor: 0.75, opacity: 0.95,
-    hueJitter: 0, satJitter: 0, valJitter: 0,
-    underpaintMode: 'blur', fastPreview: false,
+  pointillist: {
+    // Very short strokes / dabs on a fine grid — Seurat / Signac
+    brushRadii: '4, 2',
+    maxStrokeLength: 3, minStrokeLength: 1,
+    curvature: 0.0, threshold: 30, gridFactor: 0.75, opacity: 0.85,
+    hueJitter: 0.1, satJitter: 0.15, valJitter: 0.1,
+    underpaintMode: 'average', fastPreview: false,
   },
-  sketchy: { // gestural, low opacity, short strokes
-    brushRadii: '6, 3',
-    maxStrokeLength: 8, minStrokeLength: 2,
-    curvature: 1.0, threshold: 60, gridFactor: 1.25, opacity: 0.6,
-    hueJitter: 0, satJitter: 0, valJitter: 0,
-    underpaintMode: 'none', fastPreview: false,
+  wash: {
+    // Large, translucent, high-jitter strokes — loose watercolour wash
+    brushRadii: '20, 10',
+    maxStrokeLength: 32, minStrokeLength: 10,
+    curvature: 0.7, threshold: 80, gridFactor: 1.5, opacity: 0.4,
+    hueJitter: 0.2, satJitter: 0.3, valJitter: 0.2,
+    underpaintMode: 'blur', fastPreview: false,
   },
 };
 
@@ -509,8 +513,7 @@ function setStatus(msg) { statusText.textContent = msg; }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-// Apply default preset on load (sets all sliders to Hertzmann values)
-applyPreset('hertzmann');
+applyPreset('impressionist');
 
 // Preset dropdown → apply preset or no-op on "Custom"
 document.getElementById('preset-select').addEventListener('change', (e) => {
