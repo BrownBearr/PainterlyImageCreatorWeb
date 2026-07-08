@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Painterly Renderer</title>
-  <!-- DM Sans (UI text) + Lilex (monospace / numerics) -->
+  <!-- Figtree (Astryx body + heading roles) + Lilex (monospace / numerics) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/@fontsource/lilex@5/index.css" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -15,7 +15,7 @@
 
 <header>
   <h1>Painterly</h1>
-  <span class="subtitle">Stroke-based image renderer · Hertzmann 1998</span>
+  <span class="subtitle">Stroke-based image renderer</span>
   <nav class="mode-tabs" role="tablist">
     <button class="mode-tab active" data-mode="image"  role="tab">Image</button>
     <button class="mode-tab"        data-mode="video"  role="tab">Video</button>
@@ -37,8 +37,8 @@
         <input type="file" id="file-input" accept="image/*" style="display:none" />
       </div>
 
-      <div class="sidebar-section">
-        <h2>Detail Mask (optional)</h2>
+      <div class="sidebar-section" data-algos="hertzmann">
+        <h2>Detail Mask (optional) <span class="tip" tabindex="0" data-tip="Optional grayscale image: white areas get finer, denser strokes; black areas are unchanged. Use it to protect faces or subjects. Hertzmann algorithm only.">i</span></h2>
         <div class="tex-row">
           <label class="file-btn" for="mask-input">Upload…</label>
           <input type="file" id="mask-input" accept="image/*" style="display:none" />
@@ -71,11 +71,11 @@
       <div class="sidebar-section">
         <h2>Video Options</h2>
         <div class="field">
-          <label>Output FPS <span class="val" id="video-fps-val">24</span></label>
+          <label>Output FPS <span class="tip" tabindex="0" data-tip="Frames per second of the output video. Lower = choppier, more stop-motion painterly feel and faster processing.">i</span> <span class="val" id="video-fps-val">24</span></label>
           <input type="range" id="video-fps" min="1" max="60" value="24" step="1" />
         </div>
-        <div class="field">
-          <label>Frame diff threshold <span class="val" id="frame-diff-val">0</span></label>
+        <div class="field" data-algos="hertzmann">
+          <label>Frame diff threshold <span class="tip" tabindex="0" data-tip="Above 0, only regions that changed between frames are repainted — steadier video and faster. Higher = more reuse, but risk of ghosting. Hertzmann algorithm only.">i</span> <span class="val" id="frame-diff-val">0</span></label>
           <input type="range" id="frame-diff" min="0" max="50" value="0" step="1" />
         </div>
         <p style="color:var(--muted); font-size:11px; line-height:1.5; margin-top:4px">
@@ -109,39 +109,61 @@
 
     <!-- ══ PRESETS ════════════════════════════════════════════════════════ -->
     <div class="sidebar-section" id="preset-section">
-      <h2>Preset</h2>
+      <h2>Preset <span class="tip" tabindex="0" data-tip="Ready-made settings combinations, grouped by the algorithm they use. Picking one overwrites the controls below; edit anything afterwards to switch to Custom.">i</span></h2>
       <select id="preset-select">
-        <option value="impressionist">Impressionist</option>
-        <option value="expressionist">Expressionist</option>
-        <option value="pointillist">Pointillist</option>
-        <option value="wash">Wash</option>
+        <optgroup label="Hertzmann '98 — Curved Brush Strokes">
+          <option value="impressionist">Impressionist</option>
+          <option value="expressionist">Expressionist</option>
+          <option value="pointillist">Pointillist</option>
+          <option value="wash">Wash</option>
+        </optgroup>
+        <optgroup label="Litwinowicz '97 — Impressionist Strokes">
+          <option value="litstrokes">Impressionist Strokes</option>
+        </optgroup>
+        <optgroup label="Haeberli '90 — Paint by Numbers">
+          <option value="daubs">Paint Daubs</option>
+        </optgroup>
+        <optgroup label="Sketch">
+          <option value="pencilsketch">Colored Pencil</option>
+        </optgroup>
         <option value="custom" disabled>Custom</option>
       </select>
     </div>
 
-    <!-- ══ SHARED SETTINGS (always visible) ════════════════════════════════ -->
+    <!-- ══ STYLE / ALGORITHM ═══════════════════════════════════════════════ -->
+    <div class="sidebar-section">
+      <h2>Style / Algorithm <span class="tip" tabindex="0" data-tip="The painting technique used. Each option is based on a classic computer-graphics paper and responds to a different subset of the settings below — irrelevant controls hide automatically.">i</span></h2>
+      <select id="algorithm-select">
+        <option value="hertzmann">Curved Brush Strokes — Hertzmann '98</option>
+        <option value="litwinowicz">Impressionist Strokes — Litwinowicz '97</option>
+        <option value="haeberli">Paint by Numbers — Haeberli '90</option>
+        <option value="pencil">Colored Pencil Sketch</option>
+      </select>
+    </div>
+
+    <!-- ══ SHARED SETTINGS ═════════════════════════════════════════════════ -->
 
     <!-- Brush settings -->
     <div class="sidebar-section">
       <h2>Brush Layers</h2>
 
-      <div class="field">
-        <label>Radii (coarse → fine, comma-separated)</label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Radii (coarse → fine) <span class="tip" tabindex="0" data-tip="Brush sizes in pixels, painted coarse to fine. Bigger first numbers block in large areas; smaller last numbers add detail. Fewer or larger values = more abstract.">i</span></label>
         <input type="text" id="brush-radii" value="8, 4, 2" placeholder="e.g. 8, 4, 2" />
       </div>
 
-      <div class="field">
-        <label>Max stroke length <span class="val" id="max-stroke-len-val">16</span></label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Max stroke length <span class="tip" tabindex="0" data-tip="The longest a single stroke can grow. Higher = longer, more flowing strokes; lower = short dabs.">i</span> <span class="val" id="max-stroke-len-val">16</span></label>
         <input type="range" id="max-stroke-len" min="1" max="64" value="16" step="1" />
       </div>
 
-      <div class="field">
-        <label>Min stroke length <span class="val" id="min-stroke-len-val">4</span></label>
+      <div class="field" data-algos="hertzmann litwinowicz pencil">
+        <label>Min stroke length <span class="tip" tabindex="0" data-tip="Strokes always reach this length before they are allowed to stop. Higher = more uniform, elongated strokes.">i</span> <span class="val" id="min-stroke-len-val">4</span></label>
         <input type="range" id="min-stroke-len" min="1" max="32" value="4" step="1" />
       </div>
 
-      <div class="field">
-        <label>Curvature <span class="val" id="curvature-val">1.0</span></label>
+      <div class="field" data-algos="hertzmann">
+        <label>Curvature <span class="tip" tabindex="0" data-tip="How strongly strokes bend to follow image contours. 1 = fully curved; 0 = straight strokes.">i</span> <span class="val" id="curvature-val">1.0</span></label>
         <input type="range" id="curvature" min="0" max="1" value="1.0" step="0.05" />
       </div>
     </div>
@@ -150,68 +172,28 @@
     <div class="sidebar-section">
       <h2>Rendering</h2>
 
-      <div class="field">
-        <label>Error threshold T <span class="val" id="threshold-val">50</span></label>
+      <div class="field" data-algos="hertzmann">
+        <label>Error threshold T <span class="tip" tabindex="0" data-tip="How wrong a region must look before a refinement layer repaints it. Lower = more strokes and detail (slower); higher = looser, sparser paint.">i</span> <span class="val" id="threshold-val">50</span></label>
         <input type="range" id="threshold" min="1" max="200" value="50" step="1" />
       </div>
 
-      <div class="field">
-        <label>Grid factor <span class="val" id="grid-factor-val">1.0</span></label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Grid factor <span class="tip" tabindex="0" data-tip="Spacing between stroke seed points relative to brush size. Lower = denser strokes and fuller coverage; higher = sparser, faster.">i</span> <span class="val" id="grid-factor-val">1.0</span></label>
         <input type="range" id="grid-factor" min="0.25" max="3" value="1.0" step="0.05" />
       </div>
 
-      <div class="field">
-        <label>Opacity <span class="val" id="opacity-val">0.9</span></label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Opacity <span class="tip" tabindex="0" data-tip="Paint transparency per stroke. 1 = solid paint; lower values let layers below show through, like a wash.">i</span> <span class="val" id="opacity-val">0.9</span></label>
         <input type="range" id="opacity" min="0.1" max="1" value="0.9" step="0.05" />
       </div>
 
-      <div class="field">
-        <label>Hue jitter <span class="val" id="hue-jitter-val">0</span></label>
-        <input type="range" id="hue-jitter" min="0" max="1" value="0" step="0.05" />
-      </div>
-
-      <div class="field">
-        <label>Saturation jitter <span class="val" id="sat-jitter-val">0</span></label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Saturation jitter <span class="tip" tabindex="0" data-tip="Random per-stroke variation in color intensity. A little (0.05–0.1) adds lively, hand-mixed color; 0 = exact source colors.">i</span> <span class="val" id="sat-jitter-val">0</span></label>
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
-      <div class="field">
-        <label>Value jitter <span class="val" id="val-jitter-val">0</span></label>
-        <input type="range" id="val-jitter" min="0" max="1" value="0" step="0.05" />
-      </div>
-
-      <div class="field">
-        <label>Palette size (0 = off) <span class="val" id="palette-size-val">0</span></label>
-        <input type="range" id="palette-size" min="0" max="32" value="0" step="1" />
-      </div>
-
-      <div class="field">
-        <label>Dry-brush falloff <span class="val" id="dry-brush-val">0</span></label>
-        <input type="range" id="dry-brush" min="0" max="1" value="0" step="0.05" />
-      </div>
-
-      <div class="field">
-        <label>Direction smoothing σ (0 = off) <span class="val" id="tensor-sigma-val">0</span></label>
-        <input type="range" id="tensor-sigma" min="0" max="10" value="0" step="0.5" />
-      </div>
-
-      <div class="field">
-        <label>Impasto strength <span class="val" id="impasto-strength-val">0</span></label>
-        <input type="range" id="impasto-strength" min="0" max="2" value="0" step="0.05" />
-      </div>
-
-      <div class="field">
-        <label>Impasto light strength <span class="val" id="impasto-light-val">0</span></label>
-        <input type="range" id="impasto-light" min="0" max="2" value="0" step="0.05" />
-      </div>
-
-      <div class="field">
-        <label>Light angle (°) <span class="val" id="light-angle-val">45</span></label>
-        <input type="range" id="light-angle" min="0" max="360" value="45" step="5" />
-      </div>
-
-      <div class="field">
-        <label>Underpainting</label>
+      <div class="field" data-algos="hertzmann litwinowicz haeberli">
+        <label>Underpainting <span class="tip" tabindex="0" data-tip="What the canvas starts as before strokes: a blurred copy (fills gaps invisibly), the image's average color, or plain white (gaps show as white).">i</span></label>
         <select id="underpaint-mode">
           <option value="blur">Blurred image</option>
           <option value="average">Average color</option>
@@ -219,10 +201,63 @@
         </select>
       </div>
 
-      <label class="checkbox-row">
+      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil">
         <input type="checkbox" id="fast-preview" />
-        Fast preview (downscale to 400px, then upscale)
+        Fast preview
+        <span class="tip" tabindex="0" data-tip="Renders at reduced size (400px) then upscales. Much faster for tuning settings; turn off for the final full-quality render.">i</span>
       </label>
+    </div>
+
+    <!-- Experimental settings (hidden behind toggle) -->
+    <div class="sidebar-section" id="experimental-section">
+      <h2>Experimental</h2>
+      <label class="checkbox-row">
+        <input type="checkbox" id="experimental-toggle" />
+        Enable experimental settings
+        <span class="tip" tabindex="0" data-tip="Shows advanced settings. While off, all of them are treated as disabled so results stay predictable.">i</span>
+      </label>
+
+      <div id="experimental-fields" style="display:none">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; 0 = none.">i</span> <span class="val" id="hue-jitter-val">0</span></label>
+          <input type="range" id="hue-jitter" min="0" max="1" value="0" step="0.05" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; 0 = none.">i</span> <span class="val" id="val-jitter-val">0</span></label>
+          <input type="range" id="val-jitter" min="0" max="1" value="0" step="0.05" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Palette size (0 = off) <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. 0 = off; low values (6–12) give a poster or gouache look.">i</span> <span class="val" id="palette-size-val">0</span></label>
+          <input type="range" id="palette-size" min="0" max="32" value="0" step="1" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz">
+          <label>Dry-brush falloff <span class="tip" tabindex="0" data-tip="Fades each stroke toward its tail like a brush running out of paint. Higher = shorter-looking, scratchier strokes.">i</span> <span class="val" id="dry-brush-val">0</span></label>
+          <input type="range" id="dry-brush" min="0" max="1" value="0" step="0.05" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Direction smoothing σ <span class="tip" tabindex="0" data-tip="Smooths the stroke-direction field so nearby strokes flow together. Higher = calmer, more coherent flow; 0 = raw per-pixel directions.">i</span> <span class="val" id="tensor-sigma-val">0</span></label>
+          <input type="range" id="tensor-sigma" min="0" max="10" value="0" step="0.5" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+          <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light strength is above 0.">i</span> <span class="val" id="impasto-strength-val">0</span></label>
+          <input type="range" id="impasto-strength" min="0" max="2" value="0" step="0.05" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+          <label>Impasto light strength <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; 0 = flat.">i</span> <span class="val" id="impasto-light-val">0</span></label>
+          <input type="range" id="impasto-light" min="0" max="2" value="0" step="0.05" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+          <label>Light angle (°) <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from, in degrees (0 = right, 90 = top).">i</span> <span class="val" id="light-angle-val">45</span></label>
+          <input type="range" id="light-angle" min="0" max="360" value="45" step="5" />
+        </div>
+      </div>
     </div>
 
     <!-- Actions -->

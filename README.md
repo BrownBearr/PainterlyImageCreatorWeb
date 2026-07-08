@@ -1,12 +1,23 @@
 # Painterly Image Creator
 
-A browser-based stroke-painting renderer. Upload a photo and it gets redrawn as an oil or watercolour-style painting — entirely in your browser, no server, no install.
+A browser-based stroke-painting renderer. Upload a photo and it gets redrawn as a painting or sketch — entirely in your browser, no server, no install.
 
-Based on Aaron Hertzmann's *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (1998).
+Implements four stroke-based rendering (SBR) algorithms from classic non-photorealistic-rendering research, selectable from the **Style / Algorithm** dropdown.
 
 ---
 
-## How it works
+## Styles / Algorithms
+
+| Style | Paper / origin | Character |
+|---|---|---|
+| **Curved Brush Strokes — Hertzmann '98** | Hertzmann, *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (SIGGRAPH 1998) | Layered coarse→fine curved strokes that follow image contours. The default and most tunable style. |
+| **Impressionist Strokes — Litwinowicz '97** | Litwinowicz, *Processing Images and Video for an Impressionist Effect* (SIGGRAPH 1997) | Short oriented strokes on a jittered grid, clipped at strong edges so paint never bleeds across object boundaries. |
+| **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
+| **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
+
+Each algorithm responds to a different subset of the controls — irrelevant controls hide automatically when you switch styles. Hover any setting's ⓘ icon for an explanation.
+
+### How the Hertzmann algorithm works
 
 The algorithm paints in layers, coarsest brush first. Each layer:
 
@@ -37,6 +48,8 @@ Select multiple images at once. On Chrome/Edge you will be asked to pick an outp
 ## Parameter reference
 
 All parameters are shared across Image, Video, and Batch modes.
+
+**Normal vs Experimental:** the sidebar shows the core controls by default. The advanced controls (hue/value jitter, palette, dry-brush, direction smoothing, impasto) live in the **Experimental** section and only take effect while its toggle is enabled — when the toggle is off they are all treated as their neutral values, regardless of slider positions, so results stay predictable.
 
 ---
 
@@ -121,17 +134,23 @@ The alpha value of each stroke as it blends onto the canvas. Lower opacity lets 
 
 ---
 
+#### Saturation jitter
+**Range:** 0.0 – 1.0 &emsp; **Default:** 0
+
+Per-stroke random offset applied to the stroke's saturation. At 1.0 the saturation can shift by ±100%. Small values (0.05–0.1) add lively, hand-mixed colour. This is the only jitter control in the normal (non-experimental) sidebar.
+
+---
+
+### Experimental settings
+
+These controls live behind the **Experimental** toggle. While the toggle is off they have no effect on the render.
+
+---
+
 #### Hue jitter
 **Range:** 0.0 – 1.0 &emsp; **Default:** 0
 
 Per-stroke random offset applied to the stroke's hue. At 1.0 the hue can shift up to ±180°. Adds natural colour variation across strokes — visible at values as low as 0.05.
-
----
-
-#### Saturation jitter
-**Range:** 0.0 – 1.0 &emsp; **Default:** 0
-
-Per-stroke random offset applied to the stroke's saturation. At 1.0 the saturation can shift by ±100%. Combine with hue jitter for full chromatic variation.
 
 ---
 
@@ -200,22 +219,25 @@ What the canvas is filled with before any strokes are placed.
 #### Fast preview
 **Default:** off
 
-When enabled, the image is downscaled to a maximum of 400 px on either side before painting, then the result is upscaled back to the original size. Produces a rough approximation in a fraction of the time — useful for dialling in parameters before a full-resolution render. Only the largest brush radius is used.
+When enabled, the image is downscaled to a maximum of 400 px on either side before painting, then the result is upscaled back to the original size. Produces a rough approximation in a fraction of the time — useful for dialling in parameters before a full-resolution render.
 
 ---
 
 ### Presets
 
-The **Preset** dropdown sets all parameters at once. Four built-in presets are provided:
+The **Preset** dropdown sets all parameters at once — including which algorithm is used. Presets are grouped by algorithm in the dropdown:
 
-| Preset | Character |
-|---|---|
-| **Impressionist** | Curved medium strokes, subtle colour jitter — Monet / Renoir |
-| **Expressionist** | Long bold strokes, strong colour distortion — van Gogh / Munch |
-| **Pointillist** | Very short dabs on a fine grid, no curvature — Seurat / Signac |
-| **Wash** | Large translucent strokes with high colour jitter — loose watercolour |
+| Preset | Algorithm | Character |
+|---|---|---|
+| **Impressionist** | Hertzmann '98 | Curved medium strokes, subtle colour jitter — Monet / Renoir |
+| **Expressionist** | Hertzmann '98 | Long bold strokes, strong colour distortion — van Gogh / Munch |
+| **Pointillist** | Hertzmann '98 | Very short dabs on a fine grid, no curvature — Seurat / Signac |
+| **Wash** | Hertzmann '98 | Large translucent strokes with high colour jitter — loose watercolour |
+| **Impressionist Strokes** | Litwinowicz '97 | Dense short oriented strokes, crisp object edges |
+| **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
+| **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
 
-Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
+Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
 
 ---
 
@@ -244,6 +266,8 @@ Frames per second of the output video. Higher values produce smoother motion but
 **Range:** 0 – 50 &emsp; **Default:** 0 (off)
 
 When greater than 0, enables temporal coherence: the previous frame's painted canvas is reused as the starting point for the current frame, and only grid cells where the source video changed by more than this amount (average RGB channel difference) are repainted. Unchanged regions keep their existing strokes, eliminating most inter-frame flicker. Raise the value to keep more of the previous frame; lower it to repaint more aggressively on subtle motion.
+
+**Hertzmann algorithm only** — the other styles ignore this setting and repaint every frame. They use seeded (deterministic) random placement instead, so stroke positions stay fixed between frames and only colors track the video.
 
 ---
 

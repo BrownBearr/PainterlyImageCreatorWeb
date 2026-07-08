@@ -41,9 +41,22 @@ const modeTabs       = document.querySelectorAll('.mode-tab');
 // ─── Presets ──────────────────────────────────────────────────────────────────
 // Edit values here to tune each preset.
 
+// Baseline values every preset falls back to for fields it doesn't set,
+// so switching between presets never leaves stale values behind.
+const PRESET_DEFAULTS = {
+  algorithm: 'hertzmann',
+  brushRadii: '8, 4, 2',
+  maxStrokeLength: 16, minStrokeLength: 4,
+  curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
+  hueJitter: 0, satJitter: 0, valJitter: 0,
+  underpaintMode: 'blur', fastPreview: false,
+};
+
 const PRESETS = {
+  // ── Hertzmann '98 — curved brush strokes of multiple sizes ──
   impressionist: {
     // Curved medium strokes, moderate jitter — classic Monet/Renoir feel
+    algorithm: 'hertzmann',
     brushRadii: '8, 4, 2',
     maxStrokeLength: 16, minStrokeLength: 4,
     curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
@@ -52,6 +65,7 @@ const PRESETS = {
   },
   expressionist: {
     // Long, bold, highly curved strokes with strong color distortion — van Gogh / Munch
+    algorithm: 'hertzmann',
     brushRadii: '12, 6, 3',
     maxStrokeLength: 28, minStrokeLength: 8,
     curvature: 1.0, threshold: 40, gridFactor: 0.9, opacity: 0.95,
@@ -60,6 +74,7 @@ const PRESETS = {
   },
   pointillist: {
     // Very short strokes / dabs on a fine grid — Seurat / Signac
+    algorithm: 'hertzmann',
     brushRadii: '4, 2',
     maxStrokeLength: 3, minStrokeLength: 1,
     curvature: 0.0, threshold: 30, gridFactor: 0.75, opacity: 0.85,
@@ -68,11 +83,39 @@ const PRESETS = {
   },
   wash: {
     // Large, translucent, high-jitter strokes — loose watercolour wash
+    algorithm: 'hertzmann',
     brushRadii: '20, 10',
     maxStrokeLength: 32, minStrokeLength: 10,
     curvature: 0.7, threshold: 80, gridFactor: 1.5, opacity: 0.4,
     hueJitter: 0.2, satJitter: 0.3, valJitter: 0.2,
     underpaintMode: 'blur', fastPreview: false,
+  },
+  // ── Litwinowicz '97 — short oriented strokes, clipped at edges ──
+  litstrokes: {
+    algorithm: 'litwinowicz',
+    brushRadii: '3',
+    maxStrokeLength: 10, minStrokeLength: 4,
+    gridFactor: 1.0, opacity: 1.0,
+    hueJitter: 0.03, satJitter: 0.05, valJitter: 0.05,
+    underpaintMode: 'blur', fastPreview: false,
+  },
+  // ── Haeberli '90 — paint by numbers: random point-sampled daubs ──
+  daubs: {
+    algorithm: 'haeberli',
+    brushRadii: '16, 8, 4',
+    maxStrokeLength: 6, minStrokeLength: 1,
+    gridFactor: 1.0, opacity: 0.9,
+    satJitter: 0.1, valJitter: 0.08,
+    underpaintMode: 'average', fastPreview: false,
+  },
+  // ── Colored pencil sketch — hatching strokes on white paper ──
+  pencilsketch: {
+    algorithm: 'pencil',
+    brushRadii: '2, 1',
+    maxStrokeLength: 14, minStrokeLength: 6,
+    gridFactor: 0.8, opacity: 0.45,
+    satJitter: 0.05,
+    underpaintMode: 'none', fastPreview: false,
   },
 };
 
@@ -86,10 +129,12 @@ function setSlider(id, val) {
 }
 
 function applyPreset(key) {
-  const p = PRESETS[key];
-  if (!p) return;
+  const preset = PRESETS[key];
+  if (!preset) return;
+  const p = { ...PRESET_DEFAULTS, ...preset };
   _applyingPreset = true;
   document.getElementById('preset-select').value = key;
+  document.getElementById('algorithm-select').value = p.algorithm;
   document.getElementById('brush-radii').value = p.brushRadii;
   setSlider('max-stroke-len', p.maxStrokeLength);
   setSlider('min-stroke-len', p.minStrokeLength);
@@ -97,18 +142,33 @@ function applyPreset(key) {
   setSlider('threshold', p.threshold);
   setSlider('grid-factor', p.gridFactor);
   setSlider('opacity', p.opacity);
-  setSlider('hue-jitter', p.hueJitter ?? 0);
-  setSlider('sat-jitter', p.satJitter ?? 0);
-  setSlider('val-jitter', p.valJitter ?? 0);
+  setSlider('hue-jitter', p.hueJitter);
+  setSlider('sat-jitter', p.satJitter);
+  setSlider('val-jitter', p.valJitter);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
   _applyingPreset = false;
+  updateControlVisibility();
 }
 
 function markCustom() {
   if (_applyingPreset) return;
   const sel = document.getElementById('preset-select');
   if (sel.value !== 'custom') sel.value = 'custom';
+}
+
+// ─── Per-algorithm / experimental control visibility ─────────────────────────
+// Elements carry data-algos="hertzmann litwinowicz …" listing the algorithms
+// they apply to. Controls inside #experimental-fields additionally require the
+// Experimental toggle to be on.
+
+function updateControlVisibility() {
+  const algo = document.getElementById('algorithm-select').value;
+  const exp  = document.getElementById('experimental-toggle').checked;
+  document.getElementById('experimental-fields').style.display = exp ? '' : 'none';
+  document.querySelectorAll('[data-algos]').forEach(el => {
+    el.style.display = el.dataset.algos.split(' ').includes(algo) ? '' : 'none';
+  });
 }
 
 // ─── Mode switching ───────────────────────────────────────────────────────────
@@ -359,7 +419,15 @@ document.getElementById('clear-mask').addEventListener('click', () => {
 function getParams() {
   const radiiRaw = document.getElementById('brush-radii').value;
   const brushRadii = radiiRaw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0 && isFinite(n));
+
+  // When the Experimental toggle is off, all experimental params are forced
+  // to their neutral (no-op) values regardless of slider positions, so hidden
+  // controls can never secretly affect the result. Slider state is preserved.
+  const exp = document.getElementById('experimental-toggle').checked;
+  const expVal = (id) => exp ? (parseFloat(document.getElementById(id).value) || 0) : 0;
+
   return {
+    algorithm:       document.getElementById('algorithm-select').value,
     brushRadii:      brushRadii.length ? brushRadii : [8, 4, 2],
     threshold:       parseFloat(document.getElementById('threshold').value) || 50,
     maxStrokeLength: parseInt(document.getElementById('max-stroke-len').value, 10) || 16,
@@ -367,19 +435,19 @@ function getParams() {
     curvature:       parseFloat(document.getElementById('curvature').value) ?? 1.0,
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
-    paletteSize:          parseInt(document.getElementById('palette-size').value, 10) || 0,
-    dryBrushAmount:       parseFloat(document.getElementById('dry-brush').value) || 0,
-    tensorSigma:          parseFloat(document.getElementById('tensor-sigma').value) || 0,
-    hueJitter:            parseFloat(document.getElementById('hue-jitter').value) || 0,
-    satJitter:            parseFloat(document.getElementById('sat-jitter').value) || 0,
-    valJitter:            parseFloat(document.getElementById('val-jitter').value) || 0,
+    satJitter:       parseFloat(document.getElementById('sat-jitter').value) || 0,
+    paletteSize:          exp ? (parseInt(document.getElementById('palette-size').value, 10) || 0) : 0,
+    dryBrushAmount:       expVal('dry-brush'),
+    tensorSigma:          expVal('tensor-sigma'),
+    hueJitter:            expVal('hue-jitter'),
+    valJitter:            expVal('val-jitter'),
+    impastoStrength:      expVal('impasto-strength'),
+    impastoLightStrength: expVal('impasto-light'),
+    lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
     maskWidth:  maskImageData ? maskImageData.width  : 0,
     maskHeight: maskImageData ? maskImageData.height : 0,
-    impastoStrength:      parseFloat(document.getElementById('impasto-strength').value) || 0,
-    impastoLightStrength: parseFloat(document.getElementById('impasto-light').value) || 0,
-    lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
     fastPreview:          document.getElementById('fast-preview').checked,
     underpaintMode:  document.getElementById('underpaint-mode').value,
   };
@@ -548,6 +616,37 @@ function setStatus(msg) { statusText.textContent = msg; }
     inp.addEventListener('input', sync); sync();
   });
 
+// ─── Tooltips ─────────────────────────────────────────────────────────────────
+// The sidebar scrolls (overflow-y: auto), so CSS-only tooltips would clip.
+// A single fixed-position element is shown next to whichever ⓘ icon is
+// hovered or keyboard-focused, clamped to the viewport.
+
+const tooltipEl = document.createElement('div');
+tooltipEl.id = 'tooltip';
+document.body.appendChild(tooltipEl);
+
+function showTip(e) {
+  const tip = e.currentTarget.dataset.tip;
+  if (!tip) return;
+  tooltipEl.textContent = tip;
+  tooltipEl.classList.add('show');
+  const r = e.currentTarget.getBoundingClientRect();
+  tooltipEl.style.left = Math.min(r.right + 8, window.innerWidth - 252) + 'px';
+  const top = Math.max(8, Math.min(r.top - 4, window.innerHeight - tooltipEl.offsetHeight - 8));
+  tooltipEl.style.top = top + 'px';
+}
+
+function hideTip() { tooltipEl.classList.remove('show'); }
+
+document.querySelectorAll('.tip').forEach(t => {
+  t.addEventListener('mouseenter', showTip);
+  t.addEventListener('focus',      showTip);
+  t.addEventListener('mouseleave', hideTip);
+  t.addEventListener('blur',       hideTip);
+  // The ⓘ sits inside <label> elements; stop clicks from toggling checkboxes.
+  t.addEventListener('click', (e) => e.preventDefault());
+});
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 applyPreset('impressionist');
@@ -556,6 +655,16 @@ applyPreset('impressionist');
 document.getElementById('preset-select').addEventListener('change', (e) => {
   if (e.target.value !== 'custom') applyPreset(e.target.value);
 });
+
+// Algorithm switch → re-evaluate which controls are relevant + mark Custom
+document.getElementById('algorithm-select').addEventListener('change', () => {
+  markCustom();
+  updateControlVisibility();
+});
+
+// Experimental toggle → show/hide fields. Not a paint parameter itself,
+// so it does not mark the preset as Custom.
+document.getElementById('experimental-toggle').addEventListener('change', updateControlVisibility);
 
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
@@ -568,6 +677,8 @@ document.getElementById('preset-select').addEventListener('change', (e) => {
     el.addEventListener('input',  markCustom);
     el.addEventListener('change', markCustom);
   });
+
+updateControlVisibility();
 
 updateButtonStates();
 setStatus('Upload an image to begin.');

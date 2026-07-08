@@ -1,6 +1,6 @@
 # Painterly Image Creator Web
 
-Browser-based stroke-painting renderer based on Aaron Hertzmann's *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (1998). Runs entirely client-side — no server, no build step.
+Browser-based stroke-painting renderer implementing four stroke-based NPR algorithms (Hertzmann 1998 curved strokes, Litwinowicz 1997 impressionist strokes, Haeberli 1990 paint-by-numbers, and a colored pencil hatching style). Runs entirely client-side — no server, no build step.
 
 ## Architecture
 
@@ -17,23 +17,22 @@ Six files at the repo root, all plain JavaScript:
 
 The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main.js` spawns the worker, posts `render` messages, and receives `progress`/`done`/`error` responses. `video-batch.js` wraps the worker in a `PainterWorker` class and handles multi-frame pipelines.
 
-## Algorithm (worker.js)
+## Algorithms (worker.js)
 
-Implements the Hertzmann 1998 multi-layer approach:
+`paintify()` is a thin driver: downscale (fast preview), RGBA→Float32 RGB, palette build, then dispatch through the `ALGORITHMS` registry keyed by `params.algorithm` (fallback: `hertzmann`):
 
-1. Fill canvas with underpainting (blurred image, average colour, or white).
-2. For each brush radius (coarse → fine):
-   - Gaussian-blur the reference image to the current scale.
-   - Compute a per-pixel Lab-colour error map between the blurred reference and the current canvas.
-   - Walk a shuffled grid; wherever cell error exceeds threshold `T`, grow a curved stroke following the image gradient.
-   - Stop the stroke when it diverges from the reference or reaches max length.
-3. Finer layers fill detail missed by coarser strokes.
+| Key | Function | Approach |
+|---|---|---|
+| `hertzmann` | `paintHertzmann` | Layered coarse→fine curved strokes; Lab error map decides where to repaint; strokes follow gradient perpendiculars (`makeCurvedStroke`). Only algorithm that supports temporal coherence (`prevState`) and the detail mask. |
+| `litwinowicz` | `paintLitwinowicz` | Jittered grid of short oriented strokes (⊥ smoothed gradient via structure tensor), clipped where Sobel edge magnitude exceeds 0.35·max. |
+| `haeberli` | `paintHaeberli` | Random seeded daubs, one pass per radius coarse→fine; round dab or gradient-oriented daub. |
+| `pencil` | `paintPencil` | White paper, luminance-gated colored hatch strokes (+cross-hatch in shadows), edge-emphasis pass, deterministic paper-grain multiply. Ignores `underpaintMode`. |
 
-Key internals:
-- `makeRng` / `shuffleArray` — seeded mulberry32 RNG for reproducible outputs.
-- `gaussianBlurRGB` — separable Gaussian blur in float RGB.
-- `rgbToLab` — sRGB → CIE Lab for perceptual error measurement.
-- Strokes are solid anti-aliased rounded rectangles (or texture-stamped if a brush texture is loaded).
+Shared helpers: `applyUnderpaint(env)`, `applyImpastoLighting(env)`, `finalizeStrokeColor()` (palette snap → HSV jitter), `renderStrokeSolid()` (capsule rasterizer — stroke points may be fractional; the mask bounding box is floor/ceil'd to stay integral, do not regress this), `gaussianBlurRGB`, `computeGradients`, `computeGradientsST`, `rgbToLab`.
+
+RNG: Hertzmann uses `Math.random()`; the other three use seeded `mulberry32` so stroke placement is deterministic (video frame stability).
+
+The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState }`.
 
 ## Modes
 
@@ -43,24 +42,17 @@ Key internals:
 
 All modes share the same sidebar parameters.
 
-## Parameters
+## Parameters & UI conventions
 
-| Parameter | Default | Effect |
-|---|---|---|
-| Brush radii | `8, 4, 2` | Comma-separated layer radii, coarse → fine |
-| Max stroke length | 16 | Steps before a stroke is forced to stop |
-| Min stroke length | 4 | Steps before early-stop is allowed |
-| Curvature | 1.0 | 0 = straight strokes, 1 = follows image edges |
-| Error threshold T | 50 | Min cell error before placing a stroke (Lab distance) |
-| Grid factor | 1.0 | Grid cell size relative to brush radius |
-| Opacity | 0.9 | Alpha of each stroke |
-| Seed | 0 | RNG seed — same seed = same painting |
-| Underpainting | Blurred image | Canvas fill before any strokes |
-| Fast preview | off | Downscale to 400 px, paint, upscale back |
+- Normal controls: brush radii, max/min stroke length, curvature, threshold T, grid factor, opacity, saturation jitter, underpainting, fast preview.
+- **Experimental controls** (hue/value jitter, palette size, dry-brush, tensor σ, impasto strength/light/angle) live in `#experimental-fields` behind the `#experimental-toggle` checkbox. Gating happens in `getParams()` in `main.js`: when the toggle is off these params are sent as neutral values regardless of slider state. Never bypass this by reading sliders directly.
+- **Per-algorithm visibility**: elements carry `data-algos="hertzmann litwinowicz …"`; `updateControlVisibility()` in `main.js` shows/hides them on algorithm change, preset apply, and toggle change. When adding a control, give it a `data-algos` attribute and a `.tip` tooltip span.
+- **Tooltips**: `<span class="tip" tabindex="0" data-tip="…">i</span>` next to each label; a single fixed-position `#tooltip` element (created in `main.js`) is positioned beside the hovered/focused icon — CSS-only tooltips would clip in the scrolling sidebar.
+- **Typography**: follows the Astryx design system font roles — Figtree for both body (`--font-ui`) and headings (`--font-display`, semibold 600 on the 14px × 1.2 geometric scale), Lilex (`--font-mono`) for numeric values.
 
 ## Presets
 
-Defined in `main.js` as the `PRESETS` object: `hertzmann`, `loose`, `detailed`, `sketchy`. All preset values have `// TODO: tune values` comments — these are intentionally rough and should be refined. When adding a preset, add it to `PRESETS` and add a matching `<option>` in `index.html`.
+Defined in `main.js` as the `PRESETS` object: `impressionist`, `expressionist`, `pointillist`, `wash` (Hertzmann), `litstrokes` (Litwinowicz), `daubs` (Haeberli), `pencilsketch` (pencil). Every preset carries an `algorithm` field; `applyPreset` merges over `PRESET_DEFAULTS` so omitted fields reset rather than leak from the previous preset. When adding a preset, add it to `PRESETS` and a matching `<option>` inside the right `<optgroup>` in `index.html`.
 
 ## Development
 

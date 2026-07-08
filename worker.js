@@ -1,8 +1,19 @@
 'use strict';
 
-function shuffleArray(arr) {
+// Seeded PRNG — used by the newer algorithms so stroke placement is
+// deterministic (important for frame-to-frame stability in video mode).
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleArray(arr, rand = Math.random) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
   }
 }
@@ -331,10 +342,11 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
       const sx0 = segPts[0][0], sy0 = segPts[0][1];
       const sx1 = segPts[1][0], sy1 = segPts[1][1];
       const pad = Math.ceil(radius) + 2;
-      const bx0 = Math.max(0, Math.min(sx0, sx1) - pad);
-      const by0 = Math.max(0, Math.min(sy0, sy1) - pad);
-      const bx1 = Math.min(w, Math.max(sx0, sx1) + pad + 1);
-      const by1 = Math.min(h, Math.max(sy0, sy1) + pad + 1);
+      // floor/ceil: stroke points may be fractional; the mask box must be integral
+      const bx0 = Math.max(0, Math.floor(Math.min(sx0, sx1) - pad));
+      const by0 = Math.max(0, Math.floor(Math.min(sy0, sy1) - pad));
+      const bx1 = Math.min(w, Math.ceil(Math.max(sx0, sx1) + pad + 1));
+      const by1 = Math.min(h, Math.ceil(Math.max(sy0, sy1) + pad + 1));
       if (bx1 <= bx0 || by1 <= by0) continue;
       const mw = bx1 - bx0, mh = by1 - by0;
       const mask = new Float32Array(mw * mh);
@@ -364,8 +376,9 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
     if (py < minY) minY = py; if (py > maxY) maxY = py;
   }
   const pad = Math.ceil(radius) + 2;
-  const bx0 = Math.max(0, minX - pad), by0 = Math.max(0, minY - pad);
-  const bx1 = Math.min(w, maxX + pad + 1), by1 = Math.min(h, maxY + pad + 1);
+  // floor/ceil: stroke points may be fractional; the mask box must be integral
+  const bx0 = Math.max(0, Math.floor(minX - pad)), by0 = Math.max(0, Math.floor(minY - pad));
+  const bx1 = Math.min(w, Math.ceil(maxX + pad + 1)), by1 = Math.min(h, Math.ceil(maxY + pad + 1));
   if (bx1 <= bx0 || by1 <= by0) return;
 
   const mw = bx1 - bx0, mh = by1 - by0;
@@ -477,49 +490,83 @@ function upscaleRGB(srcRGB, sw, sh, dw, dh) {
   return dst;
 }
 
-// ─── Main paintify function ───────────────────────────────────────────────────
+// ─── Shared algorithm helpers ─────────────────────────────────────────────────
 
-function paintify(imageData, params, onProgress, prevState) {
-  let { width: origW, height: origH } = imageData;
-  let srcData = imageData.data;
+// Palette snap then HSV jitter — the common per-stroke color pipeline.
+function finalizeStrokeColor(r, g, b, params, palette, rand = Math.random) {
+  let color = palette ? snapToPalette(r, g, b, palette) : [r, g, b];
+  const { hueJitter = 0, satJitter = 0, valJitter = 0 } = params;
+  if (hueJitter > 0 || satJitter > 0 || valJitter > 0) {
+    let [h2, s2, v2] = rgbToHsv(color[0], color[1], color[2]);
+    h2 += (rand() * 2 - 1) * hueJitter;
+    s2 = Math.max(0, Math.min(1, s2 + (rand() * 2 - 1) * satJitter));
+    v2 = Math.max(0, Math.min(1, v2 + (rand() * 2 - 1) * valJitter));
+    color = hsvToRgb(h2, s2, v2);
+  }
+  return color;
+}
 
-  // Fast preview: downscale before processing
-  let procW = origW, procH = origH;
-  if (params.fastPreview) {
-    const maxSide = 400;
-    const scale = Math.min(1, maxSide / Math.max(origW, origH));
-    if (scale < 1) {
-      procW = Math.max(1, Math.round(origW * scale));
-      procH = Math.max(1, Math.round(origH * scale));
-      srcData = downscaleRGBA(srcData, origW, origH, procW, procH);
+// Fill the starting canvas per underpaintMode ('blur' | 'none' | 'average').
+function applyUnderpaint(env) {
+  const { srcRGB, canvasRGB, w, h, radii, params } = env;
+  const mode = params.underpaintMode ?? 'blur';
+  if (mode === 'blur') {
+    // Blur the source at the coarsest radius and use that as the starting canvas
+    const blurSigma = Math.max(0.1, (radii[0] ?? 8) * 0.5);
+    canvasRGB.set(gaussianBlurRGB(srcRGB, w, h, blurSigma));
+  } else if (mode === 'none') {
+    canvasRGB.fill(255);
+  } else {
+    // 'average': fill with mean color of the image
+    let sumR = 0, sumG = 0, sumB = 0;
+    for (let i = 0; i < w * h; i++) {
+      sumR += srcRGB[i * 3]; sumG += srcRGB[i * 3 + 1]; sumB += srcRGB[i * 3 + 2];
+    }
+    const n = w * h;
+    for (let i = 0; i < w * h; i++) {
+      canvasRGB[i * 3] = sumR / n; canvasRGB[i * 3 + 1] = sumG / n; canvasRGB[i * 3 + 2] = sumB / n;
     }
   }
+}
 
-  const w = procW, h = procH;
+// Impasto height-map lighting pass (Hertzmann 2002 "Fast Paint Texture").
+function applyImpastoLighting(env) {
+  const { canvasRGB, heightBuf, w, h, params } = env;
+  const { lightAngle = 45, impastoLightStrength = 0 } = params;
+  if (!heightBuf || impastoLightStrength <= 0) return;
 
-  // RGBA -> RGB float
-  const srcRGB = new Float32Array(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
-    srcRGB[i * 3]     = srcData[i * 4];
-    srcRGB[i * 3 + 1] = srcData[i * 4 + 1];
-    srcRGB[i * 3 + 2] = srcData[i * 4 + 2];
+  const ambient = 0.6;
+  const angleRad = (lightAngle * Math.PI) / 180;
+  const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
+  const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
+  const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const get = (xx, yy) => heightBuf[Math.max(0, Math.min(h - 1, yy)) * w + Math.max(0, Math.min(w - 1, xx))];
+      const dzdx = (get(x + 1, y) - get(x - 1, y)) * 0.5;
+      const dzdy = (get(x, y + 1) - get(x, y - 1)) * 0.5;
+      // Surface normal: (-dzdx, -dzdy, 1) normalized
+      const nx = -dzdx, ny = -dzdy, nz = 1.0;
+      const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      const dot = Math.max(0, (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz);
+      const light = ambient + impastoLightStrength * dot;
+      const ci = (y * w + x) * 3;
+      canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
+      canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
+      canvasRGB[ci + 2] = Math.min(255, canvasRGB[ci + 2] * light);
+    }
   }
+}
 
-  const { brushRadii, threshold, maxStrokeLength, minStrokeLength,
-          curvature, opacity, gridFactor, underpaintMode = 'average',
-          hueJitter = 0, satJitter = 0, valJitter = 0,
-          impastoStrength = 0, lightAngle = 45, impastoLightStrength = 0,
+// ─── Algorithm: Hertzmann 1998 — curved brush strokes of multiple sizes ───────
+
+function paintHertzmann(env) {
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState } = env;
+  const { threshold, maxStrokeLength, minStrokeLength, curvature, opacity, gridFactor,
           frameDiffThreshold = 0,
           maskData = null, maskWidth = 0, maskHeight = 0,
-          paletteSize = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
-
-  const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
-  if (radii.length === 0) radii.push(4);
-
-  const canvasRGB = new Float32Array(w * h * 3);
-  const heightBuf = (impastoStrength > 0 || impastoLightStrength > 0)
-    ? new Float32Array(w * h) : null;
-  const palette = paletteSize > 1 ? buildPalette(srcRGB, w, h, paletteSize) : null;
+          impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
 
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
   // and build a per-pixel diff mask to skip unchanged cells.
@@ -538,23 +585,8 @@ function paintify(imageData, params, onProgress, prevState) {
       const db = Math.abs(srcRGB[i*3+2] - prevState.prevSrcRGB[i*3+2]);
       cellDiffMap[i] = (dr + dg + db) / 3;
     }
-  } else if (underpaintMode === 'blur') {
-    // Blur the source at the coarsest radius and use that as the starting canvas
-    const blurSigma = Math.max(0.1, (radii[0] ?? 8) * 0.5);
-    const blurred = gaussianBlurRGB(srcRGB, w, h, blurSigma);
-    canvasRGB.set(blurred);
-  } else if (underpaintMode === 'none') {
-    canvasRGB.fill(255);
   } else {
-    // 'average': fill with mean color of the image
-    let sumR = 0, sumG = 0, sumB = 0;
-    for (let i = 0; i < w * h; i++) {
-      sumR += srcRGB[i * 3]; sumG += srcRGB[i * 3 + 1]; sumB += srcRGB[i * 3 + 2];
-    }
-    const n = w * h;
-    for (let i = 0; i < w * h; i++) {
-      canvasRGB[i * 3] = sumR / n; canvasRGB[i * 3 + 1] = sumG / n; canvasRGB[i * 3 + 2] = sumB / n;
-    }
+    applyUnderpaint(env);
   }
 
   for (let ri = 0; ri < radii.length; ri++) {
@@ -610,46 +642,304 @@ function paintify(imageData, params, onProgress, prevState) {
         { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature }
       );
 
-      let strokeColor = palette ? snapToPalette(color[0], color[1], color[2], palette) : color;
-      if (hueJitter > 0 || satJitter > 0 || valJitter > 0) {
-        let [h2, s2, v2] = rgbToHsv(color[0], color[1], color[2]);
-        h2 += (Math.random() * 2 - 1) * hueJitter;
-        s2 = Math.max(0, Math.min(1, s2 + (Math.random() * 2 - 1) * satJitter));
-        v2 = Math.max(0, Math.min(1, v2 + (Math.random() * 2 - 1) * valJitter));
-        strokeColor = hsvToRgb(h2, s2, v2);
-      }
+      const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette);
 
       renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount);
     }
 
     onProgress((ri + 1) / radii.length);
   }
+}
 
-  // Impasto lighting pass
-  if (heightBuf && impastoLightStrength > 0) {
-    const ambient = 0.6;
-    const angleRad = (lightAngle * Math.PI) / 180;
-    const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
-    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
-    const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
+// ─── Algorithm: Litwinowicz 1997 — impressionist oriented strokes ─────────────
+// "Processing Images and Video for an Impressionist Effect": short oriented
+// rectangular strokes on a jittered grid, direction perpendicular to the
+// (smoothed) image gradient, clipped where they would cross a strong edge.
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const get = (xx, yy) => heightBuf[Math.max(0, Math.min(h - 1, yy)) * w + Math.max(0, Math.min(w - 1, xx))];
-        const dzdx = (get(x + 1, y) - get(x - 1, y)) * 0.5;
-        const dzdy = (get(x, y + 1) - get(x, y - 1)) * 0.5;
-        // Surface normal: (-dzdx, -dzdy, 1) normalized
-        const nx = -dzdx, ny = -dzdy, nz = 1.0;
-        const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        const dot = Math.max(0, (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz);
-        const light = ambient + impastoLightStrength * dot;
-        const ci = (y * w + x) * 3;
-        canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
-        canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
-        canvasRGB[ci + 2] = Math.min(255, canvasRGB[ci + 2] * light);
-      }
+function paintLitwinowicz(env) {
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress } = env;
+  const { maxStrokeLength, minStrokeLength, gridFactor, opacity,
+          impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
+  const rand = mulberry32(0xC0FFEE);
+
+  applyUnderpaint(env);
+
+  // Single stroke width: the first (coarsest) brush radius.
+  const radius = Math.max(1, Math.round(radii[0] ?? 3));
+  const refBlur = gaussianBlurRGB(srcRGB, w, h, Math.max(0.5, radius * 0.5));
+
+  // Smoothed orientation field (the paper smooths/interpolates directions);
+  // the Direction smoothing slider overrides the default σ when set.
+  const { gx, gy, gmag } = computeGradientsST(refBlur, w, h, tensorSigma > 0 ? tensorSigma : 2.0);
+
+  // Raw Sobel magnitude for edge clipping.
+  const { gmag: edgeMag } = computeGradients(refBlur, w, h);
+  let maxEdge = 0;
+  for (let i = 0; i < edgeMag.length; i++) if (edgeMag[i] > maxEdge) maxEdge = edgeMag[i];
+  const edgeThresh = 0.35 * maxEdge;
+
+  // Jittered grid of stroke centers.
+  const spacing = Math.max(1, Math.round(radius * 2 * gridFactor));
+  const centers = [];
+  for (let y = 0; y < h; y += spacing) {
+    for (let x = 0; x < w; x += spacing) {
+      const jx = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * spacing)));
+      const jy = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * spacing)));
+      centers.push([jx, jy]);
     }
   }
+  shuffleArray(centers, rand);
+
+  const total = centers.length;
+  let done = 0;
+  for (const [cx, cy] of centers) {
+    const idx = cy * w + cx;
+
+    // Stroke direction: perpendicular to the gradient; constant 45° where
+    // the gradient is too weak to be meaningful (paper's fallback).
+    let theta = gmag[idx] > 1e-4 ? Math.atan2(gx[idx], -gy[idx]) : Math.PI / 4;
+    theta += (rand() * 2 - 1) * 0.26; // ±15° perturbation
+    const dx = Math.cos(theta), dy = Math.sin(theta);
+
+    // Length from the sliders with a ±15% perturbation.
+    const targetLen = (minStrokeLength + rand() * Math.max(0, maxStrokeLength - minStrokeLength))
+                    * (0.85 + rand() * 0.3);
+    const half = Math.max(0.5, targetLen / 2);
+
+    // March out from the center in both directions, stopping at strong edges
+    // so strokes never bleed across object boundaries.
+    const march = (sx, sy) => {
+      let px = cx, py = cy;
+      for (let t = 1; t <= half; t++) {
+        const nx = Math.round(cx + sx * t), ny = Math.round(cy + sy * t);
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) break;
+        px = nx; py = ny;
+        if (edgeMag[ny * w + nx] > edgeThresh) break;
+      }
+      return [px, py];
+    };
+    const p0 = march(-dx, -dy);
+    const p1 = march(dx, dy);
+
+    const color = finalizeStrokeColor(
+      refBlur[idx * 3], refBlur[idx * 3 + 1], refBlur[idx * 3 + 2], params, palette, rand);
+    renderStrokeSolid(canvasRGB, [p0, p1], radius, color, opacity, w, h,
+                      heightBuf, impastoStrength, dryBrushAmount);
+
+    if ((++done & 2047) === 0) onProgress(done / total);
+  }
+  onProgress(1);
+}
+
+// ─── Algorithm: Haeberli 1990 — paint by numbers ──────────────────────────────
+// Random point-sampled dabs, one pass per brush radius coarse → fine, color
+// sampled from the source at each dab position.
+
+function paintHaeberli(env) {
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress } = env;
+  const { maxStrokeLength, gridFactor, opacity, impastoStrength = 0 } = params;
+  const rand = mulberry32(0xBADA55);
+
+  applyUnderpaint(env);
+
+  for (let ri = 0; ri < radii.length; ri++) {
+    const r = Math.max(1, Math.round(radii[ri]));
+    const refBlur = gaussianBlurRGB(srcRGB, w, h, Math.max(0.5, r * 0.4));
+    const { gx, gy, gmag } = computeGradients(refBlur, w, h);
+
+    // Enough dabs to statistically cover the image at this scale.
+    const cell = Math.max(1, r * gridFactor);
+    const nDabs = Math.ceil((w * h) / (cell * cell));
+
+    for (let i = 0; i < nDabs; i++) {
+      const x = Math.floor(rand() * w), y = Math.floor(rand() * h);
+      const idx = y * w + x;
+      const color = finalizeStrokeColor(
+        refBlur[idx * 3], refBlur[idx * 3 + 1], refBlur[idx * 3 + 2], params, palette, rand);
+
+      // Round dab by default (degenerate segment renders as a circle);
+      // elongated gradient-oriented daub when the stroke length allows it
+      // and the local gradient is meaningful.
+      let p0 = [x, y], p1 = [x, y];
+      if (maxStrokeLength > 2 && gmag[idx] > 1e-4) {
+        const len = Math.min(maxStrokeLength, r * 2);
+        const dx = -gy[idx] / gmag[idx], dy = gx[idx] / gmag[idx];
+        p0 = [x - dx * len / 2, y - dy * len / 2];
+        p1 = [x + dx * len / 2, y + dy * len / 2];
+      }
+      renderStrokeSolid(canvasRGB, [p0, p1], r, color, opacity, w, h,
+                        heightBuf, impastoStrength, 0);
+
+      if ((i & 4095) === 0) onProgress((ri + i / nDabs) / radii.length);
+    }
+    onProgress((ri + 1) / radii.length);
+  }
+}
+
+// ─── Algorithm: colored pencil sketch ─────────────────────────────────────────
+// Stroke-based hatching (not a filter): white paper, directional colored hatch
+// strokes that skip highlights, cross-hatching in shadows, edge-emphasis
+// strokes along strong contours, and a deterministic paper-grain pass.
+
+function paintPencil(env) {
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress } = env;
+  const { maxStrokeLength, minStrokeLength, gridFactor, opacity, tensorSigma = 0 } = params;
+  const rand = mulberry32(0x9E3779B9);
+
+  // Pencil always draws on near-white paper, regardless of underpaintMode.
+  canvasRGB.fill(252);
+
+  const refBlur = gaussianBlurRGB(srcRGB, w, h, 1.0);
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    lum[i] = (0.299 * refBlur[i*3] + 0.587 * refBlur[i*3+1] + 0.114 * refBlur[i*3+2]) / 255;
+  }
+
+  // Smoothed direction field for coherent hatching; raw Sobel for edges.
+  const { gx, gy, gmag } = computeGradientsST(refBlur, w, h, Math.max(2, tensorSigma));
+  const edges = computeGradients(refBlur, w, h);
+  let maxEdge = 0;
+  for (let i = 0; i < edges.gmag.length; i++) if (edges.gmag[i] > maxEdge) maxEdge = edges.gmag[i];
+  const edgeThresh = 0.30 * maxEdge;
+
+  const globalHatch = Math.PI / 4; // fallback hatch angle in flat regions
+
+  // Pencil pigment: source color, slightly more saturated and darker.
+  const pencilColor = (idx, darken = 0.82) => {
+    let [hh, ss, vv] = rgbToHsv(refBlur[idx*3], refBlur[idx*3+1], refBlur[idx*3+2]);
+    ss = Math.min(1, ss * 1.3 + 0.05);
+    vv = vv * darken;
+    const [r2, g2, b2] = hsvToRgb(hh, ss, vv);
+    return finalizeStrokeColor(r2, g2, b2, params, palette, rand);
+  };
+
+  // One hatch stroke: 3-point polyline with a slight midpoint wobble so
+  // strokes read as hand-drawn rather than ruled.
+  const hatchStroke = (cx, cy, theta, len, r, color, op) => {
+    const dx = Math.cos(theta), dy = Math.sin(theta);
+    const half = len / 2;
+    const wob = (rand() - 0.5) * r * 1.2;
+    const p0 = [cx - dx * half, cy - dy * half];
+    const pm = [cx - dy * wob, cy + dx * wob];
+    const p1 = [cx + dx * half, cy + dy * half];
+    renderStrokeSolid(canvasRGB, [p0, pm, p1], r, color, op, w, h, null, 0, 0);
+  };
+
+  // Passes A/B: hatching (+ cross-hatching in dark regions) per pencil radius.
+  const nPasses = radii.length;
+  for (let ri = 0; ri < nPasses; ri++) {
+    const r = Math.max(0.7, radii[ri] * 0.7); // pencil tips are thin
+    const spacing = Math.max(2, Math.round(radii[ri] * 2 * gridFactor));
+    for (let y = 0; y < h; y += spacing) {
+      for (let x = 0; x < w; x += spacing) {
+        const jx = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * spacing)));
+        const jy = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * spacing)));
+        const idx = jy * w + jx;
+        const d = 1 - lum[idx]; // darkness 0..1
+
+        // Light areas stay mostly paper.
+        if (rand() > d * 1.35 + 0.06) continue;
+
+        let theta = gmag[idx] > 1e-4 ? Math.atan2(gx[idx], -gy[idx]) : globalHatch;
+        theta += (rand() - 0.5) * 0.2;
+        const len = minStrokeLength + rand() * Math.max(0, maxStrokeLength - minStrokeLength);
+        const color = pencilColor(idx);
+        const op = opacity * (0.45 + 0.55 * d);
+
+        hatchStroke(jx, jy, theta, len, r, color, op);
+        // Cross-hatch shadows at ~+80°.
+        if (d > 0.55) hatchStroke(jx, jy, theta + 1.4, len * 0.8, r, color, op * 0.8);
+      }
+    }
+    onProgress((ri + 1) / (nPasses + 1));
+  }
+
+  // Pass C: edge emphasis — thin short strokes along edge tangents.
+  const rEdge = Math.max(0.7, (radii[radii.length - 1] ?? 1) * 0.5);
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const idx = y * w + x;
+      if (edges.gmag[idx] <= edgeThresh) continue;
+      if (rand() > 0.6) continue; // thin out for a sketchy, broken line
+      const theta = Math.atan2(edges.gx[idx], -edges.gy[idx]); // ⊥ gradient = along edge
+      const len = 3 + rand() * 4;
+      const color = pencilColor(idx, 0.6); // darker pigment on contours
+      hatchStroke(x, y, theta, len, rEdge, color, Math.min(1, opacity * 1.4));
+    }
+  }
+
+  // Pass D: deterministic paper grain (multiplicative hash noise) — stable
+  // across video frames because it depends only on pixel coordinates.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      const g = 1 - 0.05 * (n - Math.floor(n));
+      const ci = (y * w + x) * 3;
+      canvasRGB[ci] *= g; canvasRGB[ci + 1] *= g; canvasRGB[ci + 2] *= g;
+    }
+  }
+  onProgress(1);
+}
+
+// ─── Algorithm registry ───────────────────────────────────────────────────────
+
+const ALGORITHMS = {
+  hertzmann:   paintHertzmann,   // Hertzmann 1998 — curved brush strokes
+  litwinowicz: paintLitwinowicz, // Litwinowicz 1997 — impressionist strokes
+  haeberli:    paintHaeberli,    // Haeberli 1990 — paint by numbers
+  pencil:      paintPencil,      // colored pencil sketch (hatching)
+};
+
+// ─── Main paintify driver ─────────────────────────────────────────────────────
+
+function paintify(imageData, params, onProgress, prevState) {
+  let { width: origW, height: origH } = imageData;
+  let srcData = imageData.data;
+
+  // Fast preview: downscale before processing
+  let procW = origW, procH = origH;
+  if (params.fastPreview) {
+    const maxSide = 400;
+    const scale = Math.min(1, maxSide / Math.max(origW, origH));
+    if (scale < 1) {
+      procW = Math.max(1, Math.round(origW * scale));
+      procH = Math.max(1, Math.round(origH * scale));
+      srcData = downscaleRGBA(srcData, origW, origH, procW, procH);
+    }
+  }
+
+  const w = procW, h = procH;
+
+  // RGBA -> RGB float
+  const srcRGB = new Float32Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    srcRGB[i * 3]     = srcData[i * 4];
+    srcRGB[i * 3 + 1] = srcData[i * 4 + 1];
+    srcRGB[i * 3 + 2] = srcData[i * 4 + 2];
+  }
+
+  const { brushRadii, impastoStrength = 0, impastoLightStrength = 0,
+          frameDiffThreshold = 0, paletteSize = 0 } = params;
+
+  const radii = [...brushRadii].map(Number).filter(r => r >= 1).sort((a, b) => b - a);
+  if (radii.length === 0) radii.push(4);
+
+  const canvasRGB = new Float32Array(w * h * 3);
+  const heightBuf = (impastoStrength > 0 || impastoLightStrength > 0)
+    ? new Float32Array(w * h) : null;
+  const palette = paletteSize > 1 ? buildPalette(srcRGB, w, h, paletteSize) : null;
+
+  const paint = ALGORITHMS[params.algorithm] || paintHertzmann;
+  const isHertzmann = paint === paintHertzmann;
+
+  const env = {
+    srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress,
+    // Temporal coherence is error-map driven and only supported by Hertzmann.
+    prevState: isHertzmann ? (prevState || null) : null,
+  };
+
+  paint(env);
+  applyImpastoLighting(env);
 
   // Return final ImageData (upscale if fast preview)
   let resultData;
@@ -668,7 +958,7 @@ function paintify(imageData, params, onProgress, prevState) {
   const out = { data: resultData, width: origW, height: origH };
   // Return raw buffers for temporal coherence (only when not fast-previewing,
   // since the scaled canvas would be wrong dimensions for the next frame).
-  if (frameDiffThreshold > 0 && procW === origW && procH === origH) {
+  if (isHertzmann && frameDiffThreshold > 0 && procW === origW && procH === origH) {
     out.canvasRGB = canvasRGB;
     out.srcRGB = srcRGB;
   }
