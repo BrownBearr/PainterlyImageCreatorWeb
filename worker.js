@@ -843,7 +843,7 @@ function paintHertzmann(env) {
 // (smoothed) image gradient, clipped where they would cross a strong edge.
 
 function paintLitwinowicz(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap } = env;
   const { maxStrokeLength, minStrokeLength, gridFactor, opacity,
           impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
   const rand = mulberry32(0xC0FFEE);
@@ -872,6 +872,16 @@ function paintLitwinowicz(env) {
       const jx = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * spacing)));
       const jy = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * spacing)));
       centers.push([jx, jy]);
+      // Detail coupling: salient cells get 1–2 extra jittered strokes.
+      if (detailMap) {
+        const extra = Math.round(2 * detailMap[jy * w + jx]);
+        for (let k = 0; k < extra; k++) {
+          centers.push([
+            Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * spacing))),
+            Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * spacing))),
+          ]);
+        }
+      }
     }
   }
   shuffleArray(centers, rand);
@@ -909,7 +919,11 @@ function paintLitwinowicz(env) {
 
     const color = finalizeStrokeColor(
       refBlur[idx * 3], refBlur[idx * 3 + 1], refBlur[idx * 3 + 2], params, palette, rand);
-    renderStrokeSolid(canvasRGB, [p0, p1], radius, color, opacity, w, h,
+    // Detail coupling: thinner strokes where the detail map is bright.
+    const rStroke = detailMap
+      ? Math.max(1, Math.round(radius * (1 - 0.35 * detailMap[idx])))
+      : radius;
+    renderStrokeSolid(canvasRGB, [p0, p1], rStroke, color, opacity, w, h,
                       heightBuf, impastoStrength, dryBrushAmount,
                       getStrokeTexture(brushTex, 0, cx, cy));
 
@@ -923,7 +937,7 @@ function paintLitwinowicz(env) {
 // sampled from the source at each dab position.
 
 function paintHaeberli(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap } = env;
   const { maxStrokeLength, gridFactor, opacity, impastoStrength = 0 } = params;
   const rand = mulberry32(0xBADA55);
 
@@ -954,9 +968,23 @@ function paintHaeberli(env) {
         p0 = [x - dx * len / 2, y - dy * len / 2];
         p1 = [x + dx * len / 2, y + dy * len / 2];
       }
-      renderStrokeSolid(canvasRGB, [p0, p1], r, color, opacity, w, h,
+      // Detail coupling: smaller dabs where the detail map is bright, plus a
+      // probabilistic extra dab so salient areas end up denser.
+      const d = detailMap ? detailMap[idx] : 0;
+      const rDab = d > 0 ? Math.max(1, Math.round(r * (1 - 0.35 * d))) : r;
+      renderStrokeSolid(canvasRGB, [p0, p1], rDab, color, opacity, w, h,
                         heightBuf, impastoStrength, 0,
                         getStrokeTexture(brushTex, ri, x, y));
+      if (d > 0 && rand() < 0.6 * d) {
+        const x2 = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * r * 2)));
+        const y2 = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * r * 2)));
+        const i2 = y2 * w + x2;
+        const c2 = finalizeStrokeColor(
+          refBlur[i2 * 3], refBlur[i2 * 3 + 1], refBlur[i2 * 3 + 2], params, palette, rand);
+        renderStrokeSolid(canvasRGB, [[x2, y2], [x2, y2]], Math.max(1, Math.round(rDab * 0.8)),
+                          c2, opacity, w, h, heightBuf, impastoStrength, 0,
+                          getStrokeTexture(brushTex, ri, x2, y2));
+      }
 
       if ((i & 4095) === 0) onProgress((ri + i / nDabs) / radii.length);
     }
