@@ -38,7 +38,18 @@
       </div>
 
       <div class="sidebar-section" data-algos="hertzmann">
-        <h2>Detail Mask (optional) <span class="tip" tabindex="0" data-tip="Optional grayscale image: white areas get finer, denser strokes; black areas are unchanged. Use it to protect faces or subjects. Hertzmann algorithm only.">i</span></h2>
+        <h2>Detail (optional) <span class="tip" tabindex="0" data-tip="Concentrates finer, denser strokes where they matter: automatically (salience finds edges and contrast), via an uploaded grayscale mask (white = more detail), or both — the stronger signal wins.">i</span></h2>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="salience-toggle" />
+          Auto detail (salience)
+          <span class="tip" tabindex="0" data-tip="Automatically finds the subject (edges, contrast) and paints it with finer strokes — no mask needed.">i</span>
+        </label>
+        <div class="field">
+          <label>Auto detail strength <span class="tip" tabindex="0" data-tip="How strongly salient areas get extra detail. Higher = bigger contrast between a detailed subject and loose background.">i</span> <span class="val" id="salience-strength-val">0.5</span></label>
+          <input type="range" id="salience-strength" min="0" max="1" value="0.5" step="0.05" />
+        </div>
+
         <div class="tex-row">
           <label class="file-btn" for="mask-input">Upload…</label>
           <input type="file" id="mask-input" accept="image/*" style="display:none" />
@@ -272,6 +283,17 @@
           <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. 0 = blunt ends; 1 = sharp pointed tips. Only visible when Brush texture is above 0.">i</span> <span class="val" id="texture-taper-val">0.4</span></label>
           <input type="range" id="texture-taper" min="0" max="1" value="0.4" step="0.05" />
         </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+          <label>Salience center bias <span class="tip" tabindex="0" data-tip="Assumes the subject is near the middle of the frame: detail fades toward the corners. 0 = no positional bias.">i</span> <span class="val" id="salience-center-val">0.3</span></label>
+          <input type="range" id="salience-center" min="0" max="1" value="0.3" step="0.05" />
+        </div>
+
+        <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli">
+          <input type="checkbox" id="salience-debug" />
+          Show detail map (debug)
+          <span class="tip" tabindex="0" data-tip="Renders the combined detail map instead of the painting: bright = areas that get finer strokes. Use it to check what the salience detector found.">i</span>
+        </label>
       </div>
     </div>
 

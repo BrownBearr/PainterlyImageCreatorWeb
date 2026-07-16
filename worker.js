@@ -214,6 +214,118 @@ function computeGradientsST(rgbF32, w, h, sigma) {
   return { gx, gy, gmag };
 }
 
+// ─── Automatic salience map ───────────────────────────────────────────────────
+// Cheap bottom-up salience (SBR survey §1.3: salience-adaptive stroke density):
+// blurred edge energy + local luminance contrast, normalized by the 99th
+// percentile, with an optional center-weight prior. Returns Float32Array(w*h)
+// in [0,1] where 1 = most salient (deserves the finest strokes).
+
+function computeSalience(srcRGB, w, h, centerWeight) {
+  // Salience is low-frequency by construction (its blur σ is ~1/48th of the
+  // image), so compute it at reduced resolution (max side ≈ 240) and
+  // bilinearly upsample at the end — ~10x cheaper, visually identical map.
+  const ds = Math.max(1, Math.ceil(Math.max(w, h) / 240));
+  const fullW = w, fullH = h;
+  if (ds > 1) {
+    const sw = Math.max(8, Math.floor(w / ds)), sh = Math.max(8, Math.floor(h / ds));
+    const small = new Float32Array(sw * sh * 3);
+    for (let y = 0; y < sh; y++) {
+      const sy = Math.min(h - 1, y * ds);
+      for (let x = 0; x < sw; x++) {
+        const si = (sy * w + Math.min(w - 1, x * ds)) * 3, di = (y * sw + x) * 3;
+        small[di] = srcRGB[si]; small[di+1] = srcRGB[si+1]; small[di+2] = srcRGB[si+2];
+      }
+    }
+    srcRGB = small; w = sw; h = sh;
+  }
+
+  const { gmag } = computeGradients(srcRGB, w, h);
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    lum[i] = 0.299 * srcRGB[i*3] + 0.587 * srcRGB[i*3+1] + 0.114 * srcRGB[i*3+2];
+  }
+
+  // One blur for both signals via channel packing: R = edge energy (spreads
+  // edges into regions), G = luminance (large-scale local average).
+  const pack = new Float32Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) { pack[i*3] = gmag[i]; pack[i*3+1] = lum[i]; }
+  const blurred = gaussianBlurRGB(pack, w, h, Math.max(2, Math.max(w, h) / 48));
+
+  // Normalize each signal by its 99th percentile (256-bin histogram) so the
+  // 0.6/0.4 mix is scale-free and robust to outliers.
+  const pct99 = (get) => {
+    let max = 1e-6;
+    for (let i = 0; i < w * h; i++) if (get(i) > max) max = get(i);
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < w * h; i++) hist[Math.min(255, (get(i) / max * 255) | 0)]++;
+    let acc = 0, cut = w * h * 0.99;
+    for (let b = 0; b < 256; b++) { acc += hist[b]; if (acc >= cut) return Math.max(1e-6, (b / 255) * max); }
+    return max;
+  };
+  const edgeAt = (i) => blurred[i*3];
+  const contrastAt = (i) => Math.abs(lum[i] - blurred[i*3+1]);
+  const eN = pct99(edgeAt), cN = pct99(contrastAt);
+
+  const cx = (w - 1) / 2, cy = (h - 1) / 2;
+  const invR2 = 1 / (cx * cx + cy * cy || 1);
+  const sal = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let s = 0.6 * Math.min(1, edgeAt(i) / eN) + 0.4 * Math.min(1, contrastAt(i) / cN);
+      if (centerWeight > 0) {
+        const d2 = ((x - cx) * (x - cx) + (y - cy) * (y - cy)) * invR2;
+        s *= 1 - centerWeight * d2;
+      }
+      sal[i] = Math.max(0, Math.min(1, s));
+    }
+  }
+  if (ds === 1) return sal;
+
+  // Bilinear upsample back to full render size.
+  const out = new Float32Array(fullW * fullH);
+  const fx = (w - 1) / Math.max(1, fullW - 1), fy = (h - 1) / Math.max(1, fullH - 1);
+  for (let y = 0; y < fullH; y++) {
+    const gy2 = y * fy, y0 = gy2 | 0, y1 = Math.min(h - 1, y0 + 1), ty = gy2 - y0;
+    for (let x = 0; x < fullW; x++) {
+      const gx2 = x * fx, x0 = gx2 | 0, x1 = Math.min(w - 1, x0 + 1), tx = gx2 - x0;
+      const a = sal[y0 * w + x0] * (1 - tx) + sal[y0 * w + x1] * tx;
+      const b = sal[y1 * w + x0] * (1 - tx) + sal[y1 * w + x1] * tx;
+      out[y * fullW + x] = a * (1 - ty) + b * ty;
+    }
+  }
+  return out;
+}
+
+// Unified detail map: max(manual mask resampled to render size, salience ×
+// strength). Algorithms treat it uniformly — 0 = coarse ok, 1 = full detail.
+// Returns null when neither source is active, so the default path costs nothing.
+function buildDetailMap(srcRGB, w, h, params) {
+  const { maskData = null, maskWidth = 0, maskHeight = 0,
+          salienceOn = false, salienceStrength = 0, salienceCenter = 0 } = params;
+  const useMask = maskData && maskWidth > 0 && maskHeight > 0;
+  const useSal = salienceOn && salienceStrength > 0;
+  if (!useMask && !useSal) return null;
+
+  const map = new Float32Array(w * h);
+  if (useMask) {
+    for (let y = 0; y < h; y++) {
+      const my = Math.round(y * (maskHeight - 1) / Math.max(1, h - 1));
+      for (let x = 0; x < w; x++) {
+        const mx = Math.round(x * (maskWidth - 1) / Math.max(1, w - 1));
+        const mi = (my * maskWidth + mx) * 4;
+        map[y * w + x] = (maskData[mi] * 0.299 + maskData[mi+1] * 0.587 + maskData[mi+2] * 0.114) / 255;
+      }
+    }
+  }
+  if (useSal) {
+    const sal = computeSalience(srcRGB, w, h, salienceCenter);
+    const s = Math.min(1, salienceStrength);
+    for (let i = 0; i < w * h; i++) map[i] = Math.max(map[i], sal[i] * s);
+  }
+  return map;
+}
+
 // ─── Grid cell sampling ───────────────────────────────────────────────────────
 
 function chooseBestInCell(err, x0, y0, x1, y1, w) {
@@ -642,10 +754,9 @@ function applyImpastoLighting(env) {
 // ─── Algorithm: Hertzmann 1998 — curved brush strokes of multiple sizes ───────
 
 function paintHertzmann(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState, brushTex } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState, brushTex, detailMap } = env;
   const { threshold, maxStrokeLength, minStrokeLength, curvature, opacity, gridFactor,
           frameDiffThreshold = 0,
-          maskData = null, maskWidth = 0, maskHeight = 0,
           impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
 
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
@@ -696,16 +807,10 @@ function paintHertzmann(env) {
       const cx1 = Math.min(w, cx0 + grid), cy1 = Math.min(h, cy0 + grid);
       const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w);
 
-      // Detail mask: modulate effective threshold by mask brightness at stroke seed
-      let effectiveThreshold = threshold;
-      if (maskData && maskWidth > 0 && maskHeight > 0) {
-        const mx = Math.round(sx * (maskWidth  - 1) / Math.max(1, w - 1));
-        const my = Math.round(sy * (maskHeight - 1) / Math.max(1, h - 1));
-        const mi = (Math.max(0, Math.min(maskHeight - 1, my)) * maskWidth
-                  + Math.max(0, Math.min(maskWidth  - 1, mx))) * 4;
-        const maskVal = (maskData[mi] * 0.299 + maskData[mi+1] * 0.587 + maskData[mi+2] * 0.114) / 255;
-        effectiveThreshold = Math.max(1, threshold * (1 - maskVal));
-      }
+      // Detail map (mask ∪ salience): lower the threshold where detail is wanted
+      const effectiveThreshold = detailMap
+        ? Math.max(1, threshold * (1 - detailMap[sy * w + sx]))
+        : threshold;
       if (meanErr <= effectiveThreshold && !isFirstLayer) continue;
 
       // Temporal coherence: skip cell if max source diff is below threshold
@@ -1021,14 +1126,26 @@ function paintify(imageData, params, onProgress, prevState) {
   // the legacy code path with zero overhead.
   const brushTex = (params.brushTexture > 0) ? makeBrushTextures(radii, params) : null;
 
+  // Unified detail map (manual mask ∪ salience); null when both are off.
+  const detailMap = buildDetailMap(srcRGB, w, h, params);
+
   const env = {
-    srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex,
+    srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap,
     // Temporal coherence is error-map driven and only supported by Hertzmann.
     prevState: isHertzmann ? (prevState || null) : null,
   };
 
-  paint(env);
-  applyImpastoLighting(env);
+  if (params.salienceDebug) {
+    // Debug view: output the detail map itself as grayscale instead of painting.
+    for (let i = 0; i < w * h; i++) {
+      const v = detailMap ? detailMap[i] * 255 : 0;
+      canvasRGB[i*3] = v; canvasRGB[i*3+1] = v; canvasRGB[i*3+2] = v;
+    }
+    onProgress(1);
+  } else {
+    paint(env);
+    applyImpastoLighting(env);
+  }
 
   // Return final ImageData (upscale if fast preview)
   let resultData;

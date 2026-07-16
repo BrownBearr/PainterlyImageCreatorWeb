@@ -50,6 +50,7 @@ const PRESET_DEFAULTS = {
   curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
   hueJitter: 0, satJitter: 0, valJitter: 0,
   brushTexture: 0,
+  salienceOn: false, salienceStrength: 0.5,
   underpaintMode: 'blur', fastPreview: false,
 };
 
@@ -151,6 +152,8 @@ function applyPreset(key) {
   setSlider('sat-jitter', p.satJitter);
   setSlider('val-jitter', p.valJitter);
   setSlider('brush-texture', p.brushTexture);
+  document.getElementById('salience-toggle').checked = p.salienceOn;
+  setSlider('salience-strength', p.salienceStrength);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
   _applyingPreset = false;
@@ -447,6 +450,11 @@ function getParams() {
     // 0 → worker's built-in density default; null → worker's default taper.
     bristleDensity:       expVal('bristle-density'),
     textureTaper:         exp ? (parseFloat(document.getElementById('texture-taper').value) || 0) : null,
+    salienceOn:       document.getElementById('salience-toggle').checked,
+    salienceStrength: parseFloat(document.getElementById('salience-strength').value) || 0,
+    // Center bias keeps its slider default even while Experimental is off.
+    salienceCenter:       exp ? (parseFloat(document.getElementById('salience-center').value) || 0) : 0.3,
+    salienceDebug:        exp ? document.getElementById('salience-debug').checked : false,
     dryBrushAmount:       expVal('dry-brush'),
     tensorSigma:          expVal('tensor-sigma'),
     hueJitter:            expVal('hue-jitter'),
@@ -617,6 +625,7 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
  ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
  ['brush-texture','brush-texture-val'], ['bristle-density','bristle-density-val'], ['texture-taper','texture-taper-val'],
+ ['salience-strength','salience-strength-val'], ['salience-center','salience-center-val'],
  ['palette-size','palette-size-val'], ['dry-brush','dry-brush-val'], ['tensor-sigma','tensor-sigma-val'],
  ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
  ['frame-diff','frame-diff-val']]
@@ -682,6 +691,7 @@ document.getElementById('experimental-toggle').addEventListener('change', update
  'threshold', 'grid-factor', 'opacity', 'palette-size', 'dry-brush', 'tensor-sigma',
  'hue-jitter', 'sat-jitter', 'val-jitter',
  'brush-texture', 'bristle-density', 'texture-taper',
+ 'salience-toggle', 'salience-strength', 'salience-center',
  'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);
