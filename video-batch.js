@@ -11,17 +11,19 @@ class PainterWorker {
     this._w.onmessage = (e) => {
       const { type } = e.data;
       if (type === 'progress') { this._onProgress?.(e.data.value); }
+      else if (type === 'status') { this._onStatus?.(e.data.message); }
       else if (type === 'done') { this._resolve?.(e.data.result); }
       else if (type === 'error') { this._reject?.(new Error(e.data.message)); }
     };
     this._w.onerror = (e) => this._reject?.(e);
   }
 
-  render(imageData, params, onProgress, prevState) {
+  render(imageData, params, onProgress, prevState, onStatus) {
     return new Promise((resolve, reject) => {
       this._resolve = resolve;
       this._reject = reject;
       this._onProgress = onProgress ?? null;
+      this._onStatus = onStatus ?? null;
       const msg = {
         type: 'render',
         imageData: { data: new Uint8ClampedArray(imageData.data), width: imageData.width, height: imageData.height },

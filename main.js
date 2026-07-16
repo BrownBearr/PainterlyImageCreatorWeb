@@ -51,6 +51,7 @@ const PRESET_DEFAULTS = {
   hueJitter: 0, satJitter: 0, valJitter: 0,
   brushTexture: 0,
   salienceOn: false, salienceStrength: 0.5,
+  neuralLevels: 4,
   underpaintMode: 'blur', fastPreview: false,
 };
 
@@ -154,6 +155,7 @@ function applyPreset(key) {
   setSlider('brush-texture', p.brushTexture);
   document.getElementById('salience-toggle').checked = p.salienceOn;
   setSlider('salience-strength', p.salienceStrength);
+  setSlider('neural-levels', p.neuralLevels);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
   _applyingPreset = false;
@@ -455,6 +457,7 @@ function getParams() {
     // Center bias keeps its slider default even while Experimental is off.
     salienceCenter:       exp ? (parseFloat(document.getElementById('salience-center').value) || 0) : 0.3,
     salienceDebug:        exp ? document.getElementById('salience-debug').checked : false,
+    neuralLevels:    parseInt(document.getElementById('neural-levels').value, 10) || 4,
     dryBrushAmount:       expVal('dry-brush'),
     tensorSigma:          expVal('tensor-sigma'),
     hueJitter:            expVal('hue-jitter'),
@@ -491,6 +494,8 @@ function startImageRender() {
   worker.onmessage = (e) => {
     if (e.data.type === 'progress') {
       setProgress(e.data.value);
+    } else if (e.data.type === 'status') {
+      setStatus(e.data.message);
     } else if (e.data.type === 'done') {
       const { data, width, height } = e.data.result;
       const rid = new ImageData(new Uint8ClampedArray(data), width, height);
@@ -626,6 +631,7 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
  ['brush-texture','brush-texture-val'], ['bristle-density','bristle-density-val'], ['texture-taper','texture-taper-val'],
  ['salience-strength','salience-strength-val'], ['salience-center','salience-center-val'],
+ ['neural-levels','neural-levels-val'],
  ['palette-size','palette-size-val'], ['dry-brush','dry-brush-val'], ['tensor-sigma','tensor-sigma-val'],
  ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
  ['frame-diff','frame-diff-val']]
@@ -691,7 +697,7 @@ document.getElementById('experimental-toggle').addEventListener('change', update
  'threshold', 'grid-factor', 'opacity', 'palette-size', 'dry-brush', 'tensor-sigma',
  'hue-jitter', 'sat-jitter', 'val-jitter',
  'brush-texture', 'bristle-density', 'texture-taper',
- 'salience-toggle', 'salience-strength', 'salience-center',
+ 'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
  'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);

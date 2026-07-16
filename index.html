@@ -149,6 +149,7 @@
         <option value="litwinowicz">Impressionist Strokes — Litwinowicz '97</option>
         <option value="haeberli">Paint by Numbers — Haeberli '90</option>
         <option value="pencil">Colored Pencil Sketch</option>
+        <option value="neural">Neural Paint Transformer — Liu '21</option>
       </select>
     </div>
 
@@ -193,19 +194,24 @@
         <input type="range" id="grid-factor" min="0.25" max="3" value="1.0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
         <label>Opacity <span class="tip" tabindex="0" data-tip="Paint transparency per stroke. 1 = solid paint; lower values let layers below show through, like a wash.">i</span> <span class="val" id="opacity-val">0.9</span></label>
         <input type="range" id="opacity" min="0.1" max="1" value="0.9" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
         <label>Saturation jitter <span class="tip" tabindex="0" data-tip="Random per-stroke variation in color intensity. A little (0.05–0.1) adds lively, hand-mixed color; 0 = exact source colors.">i</span> <span class="val" id="sat-jitter-val">0</span></label>
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
         <label>Brush texture <span class="tip" tabindex="0" data-tip="Bristle texture inside each stroke: paint streaks, dry breaks, and tapered ends. 0 = flat solid strokes (fastest); higher = more visible bristles.">i</span> <span class="val" id="brush-texture-val">0</span></label>
         <input type="range" id="brush-texture" min="0" max="1" value="0" step="0.05" />
+      </div>
+
+      <div class="field" data-algos="neural">
+        <label>Neural detail levels <span class="tip" tabindex="0" data-tip="How many coarse-to-fine passes the neural painter runs. More levels = finer strokes and much longer render time. First use downloads the model (~20 MB, cached).">i</span> <span class="val" id="neural-levels-val">4</span></label>
+        <input type="range" id="neural-levels" min="2" max="6" value="4" step="1" />
       </div>
 
       <div class="field" data-algos="hertzmann litwinowicz haeberli">
@@ -217,7 +223,7 @@
         </select>
       </div>
 
-      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil">
+      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil neural">
         <input type="checkbox" id="fast-preview" />
         Fast preview
         <span class="tip" tabindex="0" data-tip="Renders at reduced size (400px) then upscales. Much faster for tuning settings; turn off for the final full-quality render.">i</span>
@@ -234,17 +240,17 @@
       </label>
 
       <div id="experimental-fields" style="display:none">
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
           <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; 0 = none.">i</span> <span class="val" id="hue-jitter-val">0</span></label>
           <input type="range" id="hue-jitter" min="0" max="1" value="0" step="0.05" />
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
           <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; 0 = none.">i</span> <span class="val" id="val-jitter-val">0</span></label>
           <input type="range" id="val-jitter" min="0" max="1" value="0" step="0.05" />
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
           <label>Palette size (0 = off) <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. 0 = off; low values (6–12) give a poster or gouache look.">i</span> <span class="val" id="palette-size-val">0</span></label>
           <input type="range" id="palette-size" min="0" max="32" value="0" step="1" />
         </div>
@@ -259,17 +265,17 @@
           <input type="range" id="tensor-sigma" min="0" max="10" value="0" step="0.5" />
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
           <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light strength is above 0.">i</span> <span class="val" id="impasto-strength-val">0</span></label>
           <input type="range" id="impasto-strength" min="0" max="2" value="0" step="0.05" />
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
           <label>Impasto light strength <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; 0 = flat.">i</span> <span class="val" id="impasto-light-val">0</span></label>
           <input type="range" id="impasto-light" min="0" max="2" value="0" step="0.05" />
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
           <label>Light angle (°) <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from, in degrees (0 = right, 90 = top).">i</span> <span class="val" id="light-angle-val">45</span></label>
           <input type="range" id="light-angle" min="0" max="360" value="45" step="5" />
         </div>

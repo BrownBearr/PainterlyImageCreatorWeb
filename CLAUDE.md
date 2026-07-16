@@ -1,21 +1,25 @@
 # Painterly Image Creator Web
 
-Browser-based stroke-painting renderer implementing four stroke-based NPR algorithms (Hertzmann 1998 curved strokes, Litwinowicz 1997 impressionist strokes, Haeberli 1990 paint-by-numbers, and a colored pencil hatching style). Runs entirely client-side — no server, no build step.
+Browser-based stroke-painting renderer implementing five stroke-based NPR algorithms (Hertzmann 1998 curved strokes, Litwinowicz 1997 impressionist strokes, Haeberli 1990 paint-by-numbers, a colored pencil hatching style, and the neural Paint Transformer, ICCV 2021). Runs entirely client-side — no server, no build step.
 
 ## Architecture
 
-Six files at the repo root, all plain JavaScript:
+Plain JavaScript at the repo root:
 
 | File | Role |
 |---|---|
 | `index.html` | All markup: sidebar controls, canvas area, mode tabs |
 | `styles.css` | All styles |
 | `main.js` | UI state, event wiring, preset management, worker orchestration |
-| `worker.js` | Off-thread painting algorithm (Web Worker) |
+| `worker.js` | Off-thread painting algorithms (Web Worker) |
+| `brush-texture.js` | Procedural bristle texture tiles (loaded by worker.js via `importScripts`) |
+| `neural.js` | Paint Transformer pipeline (lazy-loaded by worker.js only for the neural algorithm) |
+| `vendor/ort/ort.min.js` | onnxruntime-web UMD bundle (lazy-loaded with neural.js; see `vendor/ort/VERSION.md`) |
 | `video-batch.js` | `PainterWorker` wrapper class, `ZipWriter`, video/batch processors |
 | `webm-muxer.js` | Third-party WebM muxer (bundled, do not edit) |
+| `tools/` | Offline Python tooling: ONNX conversion + CDN upload (not served) |
 
-The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main.js` spawns the worker, posts `render` messages, and receives `progress`/`done`/`error` responses. `video-batch.js` wraps the worker in a `PainterWorker` class and handles multi-frame pipelines.
+The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main.js` spawns the worker, posts `render` messages, and receives `progress`/`status`/`done`/`error` responses. `video-batch.js` wraps the worker in a `PainterWorker` class and handles multi-frame pipelines.
 
 ## Algorithms (worker.js)
 
@@ -27,12 +31,17 @@ The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main
 | `litwinowicz` | `paintLitwinowicz` | Jittered grid of short oriented strokes (⊥ smoothed gradient via structure tensor), clipped where Sobel edge magnitude exceeds 0.35·max. |
 | `haeberli` | `paintHaeberli` | Random seeded daubs, one pass per radius coarse→fine; round dab or gradient-oriented daub. |
 | `pencil` | `paintPencil` | White paper, luminance-gated colored hatch strokes (+cross-hatch in shadows), edge-emphasis pass, deterministic paper-grain multiply. Ignores `underpaintMode`. |
+| `neural` | `paintNeural` (neural.js) | Paint Transformer: coarse→fine patch pyramid, batched ONNX inference (WebGPU→wasm fallback), strokes decoded to oriented capsules and rasterized through `renderStrokeSolid` at full resolution. Async — `paintify` awaits it. Registered lazily by `ensureNeural()` so classic modes never load onnxruntime. Model + ORT wasm live on the CDN (see `vendor/ort/VERSION.md`), cached via the browser Cache API. |
 
-Shared helpers: `applyUnderpaint(env)`, `applyImpastoLighting(env)`, `finalizeStrokeColor()` (palette snap → HSV jitter), `renderStrokeSolid()` (capsule rasterizer — stroke points may be fractional; the mask bounding box is floor/ceil'd to stay integral, do not regress this), `gaussianBlurRGB`, `computeGradients`, `computeGradientsST`, `rgbToLab`.
+Shared helpers: `applyUnderpaint(env)`, `applyImpastoLighting(env)`, `finalizeStrokeColor()` (palette snap → HSV jitter), `renderStrokeSolid()` (capsule rasterizer — stroke points may be fractional; the mask bounding box is floor/ceil'd to stay integral, do not regress this; optional trailing `tex` handle switches to the textured inner loop), `computeSalience`/`buildDetailMap` (unified detail map: manual mask ∪ salience, `env.detailMap`, null when off), `gaussianBlurRGB`, `computeGradients`, `computeGradientsST`, `rgbToLab`.
 
-RNG: Hertzmann uses `Math.random()`; the other three use seeded `mulberry32` so stroke placement is deterministic (video frame stability).
+Brush textures (`brush-texture.js`): `makeBrushTextures` builds seeded per-radius tile sets once per job (only when `params.brushTexture > 0`); `getStrokeTexture` hashes the stroke seed position for a deterministic variant. Strength 0 must remain byte-identical to the untextured path — regression-tested against committed output.
 
-The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState }`.
+RNG: Hertzmann uses `Math.random()`; the others use seeded `mulberry32` (video frame stability); neural is deterministic given the canvas.
+
+The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap, onStatus, prevState }`.
+
+Offline tooling: `tools/convert_paint_transformer.py` (PyTorch → ONNX fp16 with torch-vs-ORT parity self-check; needs `torch onnx onnxruntime onnxconverter-common`), `tools/upload_neural_assets.py` (uploads model + ORT wasm to B2 under `painterly/`; reads `B2_KEY_ID`/`B2_APP_KEY` env vars).
 
 ## Modes
 

@@ -1106,11 +1106,20 @@ const ALGORITHMS = {
   litwinowicz: paintLitwinowicz, // Litwinowicz 1997 — impressionist strokes
   haeberli:    paintHaeberli,    // Haeberli 1990 — paint by numbers
   pencil:      paintPencil,      // colored pencil sketch (hatching)
+  // 'neural' (Paint Transformer 2021) is registered lazily by ensureNeural()
+  // so classic modes never load onnxruntime.
 };
+
+function ensureNeural() {
+  if (!ALGORITHMS.neural) {
+    importScripts('vendor/ort/ort.min.js', 'neural.js');
+    ALGORITHMS.neural = paintNeural;
+  }
+}
 
 // ─── Main paintify driver ─────────────────────────────────────────────────────
 
-function paintify(imageData, params, onProgress, prevState) {
+async function paintify(imageData, params, onProgress, prevState, onStatus) {
   let { width: origW, height: origH } = imageData;
   let srcData = imageData.data;
 
@@ -1159,6 +1168,7 @@ function paintify(imageData, params, onProgress, prevState) {
 
   const env = {
     srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap,
+    onStatus: onStatus || null,
     // Temporal coherence is error-map driven and only supported by Hertzmann.
     prevState: isHertzmann ? (prevState || null) : null,
   };
@@ -1171,7 +1181,7 @@ function paintify(imageData, params, onProgress, prevState) {
     }
     onProgress(1);
   } else {
-    paint(env);
+    await paint(env); // classic algorithms are sync; neural returns a promise
     applyImpastoLighting(env);
   }
 
@@ -1201,16 +1211,18 @@ function paintify(imageData, params, onProgress, prevState) {
 
 // ─── Worker message handler ───────────────────────────────────────────────────
 
-self.onmessage = function (e) {
+self.onmessage = async function (e) {
   const { type, imageData, params, prevState } = e.data;
   if (type !== 'render') return;
 
   try {
-    const result = paintify(
+    if (params.algorithm === 'neural') ensureNeural();
+    const result = await paintify(
       imageData,
       params,
       (progress) => self.postMessage({ type: 'progress', value: progress }),
-      prevState || null
+      prevState || null,
+      (message) => self.postMessage({ type: 'status', message })
     );
     const transfers = [result.data.buffer];
     if (result.canvasRGB) transfers.push(result.canvasRGB.buffer);
