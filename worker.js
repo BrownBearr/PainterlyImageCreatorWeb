@@ -1,5 +1,7 @@
 'use strict';
 
+importScripts('brush-texture.js');
+
 // Seeded PRNG — used by the newer algorithms so stroke placement is
 // deterministic (important for frame-to-frame stability in video mode).
 function mulberry32(seed) {
@@ -311,7 +313,51 @@ function drawThickSegment(mask, mw, mh, x0, y0, x1, y1, r) {
   }
 }
 
-function drawCircle(mask, mw, mh, cx, cy, r) {
+// Textured variant: same capsule coverage, but modulated by a brush tile
+// sampled in stroke-local (u, v) space, with a taper LUT shrinking the
+// effective radius near the stroke ends. arc0/segLen/totalLen give this
+// segment's arc-length span so u is continuous across segment joins.
+function drawThickSegmentTextured(mask, mw, mh, x0, y0, x1, y1, r, tex, arc0, segLen, totalLen) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const lenSq = dx * dx + dy * dy;
+  const len = Math.sqrt(lenSq);
+  const { tile, tw, th, uOff, strength, taperLUT, uScale } = tex;
+  const minX = Math.max(0, Math.floor(Math.min(x0, x1) - r));
+  const maxX = Math.min(mw - 1, Math.ceil(Math.max(x0, x1) + r));
+  const minY = Math.max(0, Math.floor(Math.min(y0, y1) - r));
+  const maxY = Math.min(mh - 1, Math.ceil(Math.max(y0, y1) + r));
+
+  for (let py = minY; py <= maxY; py++) {
+    for (let px = minX; px <= maxX; px++) {
+      let t, dist, perp;
+      if (lenSq < 1e-12) {
+        const ex = px - x0, ey = py - y0;
+        t = 0;
+        dist = Math.sqrt(ex * ex + ey * ey);
+        perp = dist; // degenerate (round dab): orientation is meaningless
+      } else {
+        t = Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / lenSq));
+        const cx = x0 + t * dx, cy = y0 + t * dy;
+        const ex = px - cx, ey = py - cy;
+        dist = Math.sqrt(ex * ex + ey * ey);
+        perp = ((px - x0) * dy - (py - y0) * dx) / len;
+      }
+      const arc = arc0 + t * segLen;
+      const ui = Math.min(BRUSH_TEX_W - 1, Math.max(0, ((arc / totalLen) * (BRUSH_TEX_W - 1)) | 0));
+      const rEff = r * taperLUT[ui];
+      const cov = Math.max(0, Math.min(1, rEff - dist + 0.5));
+      if (cov <= 0) continue;
+      const vNorm = Math.max(-1, Math.min(1, perp / Math.max(0.5, rEff)));
+      let tx = ((arc * uScale + uOff) % tw) | 0;
+      if (tx < 0) tx += tw;
+      const ty = ((vNorm * 0.5 + 0.5) * (th - 1) + 0.5) | 0;
+      const v = cov * (1 - strength + strength * tile[ty * tw + tx]);
+      if (v > mask[py * mw + px]) mask[py * mw + px] = v;
+    }
+  }
+}
+
+function drawCircle(mask, mw, mh, cx, cy, r, vScale = 1) {
   const x0 = Math.max(0, Math.floor(cx - r - 1));
   const x1 = Math.min(mw - 1, Math.ceil(cx + r + 1));
   const y0 = Math.max(0, Math.floor(cy - r - 1));
@@ -319,16 +365,34 @@ function drawCircle(mask, mw, mh, cx, cy, r) {
   for (let py = y0; py <= y1; py++) {
     for (let px = x0; px <= x1; px++) {
       const ex = px - cx, ey = py - cy;
-      const v = Math.max(0, Math.min(1, r - Math.sqrt(ex * ex + ey * ey) + 0.5));
+      const v = Math.max(0, Math.min(1, r - Math.sqrt(ex * ex + ey * ey) + 0.5)) * vScale;
       if (v > mask[py * mw + px]) mask[py * mw + px] = v;
     }
   }
 }
 
-function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount) {
+function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount, tex = null) {
   if (pts.length < 2) return;
   const [sr, sg, sb] = color;
   const nSegs = pts.length - 1;
+
+  // Textured strokes need cumulative arc lengths so the tile's u coordinate is
+  // continuous across segment joins. Tile repeats every ~4 radii of arc.
+  let arcLens = null, totalLen = 1, capR0 = radius, capR1 = radius, capScale = 1;
+  if (tex && tex.strength > 0) {
+    arcLens = new Float32Array(nSegs + 1);
+    for (let i = 0; i < nSegs; i++) {
+      const ddx = pts[i + 1][0] - pts[i][0], ddy = pts[i + 1][1] - pts[i][1];
+      arcLens[i + 1] = arcLens[i] + Math.sqrt(ddx * ddx + ddy * ddy);
+    }
+    totalLen = Math.max(1e-6, arcLens[nSegs]);
+    tex.uScale = tex.tw / Math.max(16, radius * 4);
+    capR0 = radius * tex.taperLUT[0];
+    capR1 = radius * tex.taperLUT[tex.taperLUT.length - 1];
+    capScale = 1 - tex.strength * 0.35; // approximate mean tile coverage
+  } else {
+    tex = null;
+  }
 
   // When dry-brush is active, composite each segment separately with a fading opacity.
   // Otherwise build a single unified mask (original behaviour, cheaper).
@@ -350,9 +414,16 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
       if (bx1 <= bx0 || by1 <= by0) continue;
       const mw = bx1 - bx0, mh = by1 - by0;
       const mask = new Float32Array(mw * mh);
-      drawThickSegment(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius);
-      if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, radius);
-      if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, radius);
+      if (tex) {
+        drawThickSegmentTextured(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius,
+                                 tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen);
+        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, capR0, capScale);
+        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, capR1, capScale);
+      } else {
+        drawThickSegment(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius);
+        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, radius);
+        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, radius);
+      }
       for (let my = 0; my < mh; my++) {
         for (let mx = 0; mx < mw; mx++) {
           const mv = mask[my * mw + mx];
@@ -384,11 +455,20 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
   const mw = bx1 - bx0, mh = by1 - by0;
   const mask = new Float32Array(mw * mh);
 
-  for (let seg = 0; seg < nSegs; seg++) {
-    drawThickSegment(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius);
+  if (tex) {
+    for (let seg = 0; seg < nSegs; seg++) {
+      drawThickSegmentTextured(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius,
+                               tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen);
+    }
+    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, capR0, capScale);
+    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, capR1, capScale);
+  } else {
+    for (let seg = 0; seg < nSegs; seg++) {
+      drawThickSegment(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius);
+    }
+    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, radius);
+    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, radius);
   }
-  drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, radius);
-  drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, radius);
 
   for (let my = 0; my < mh; my++) {
     for (let mx = 0; mx < mw; mx++) {
@@ -562,7 +642,7 @@ function applyImpastoLighting(env) {
 // ─── Algorithm: Hertzmann 1998 — curved brush strokes of multiple sizes ───────
 
 function paintHertzmann(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState, brushTex } = env;
   const { threshold, maxStrokeLength, minStrokeLength, curvature, opacity, gridFactor,
           frameDiffThreshold = 0,
           maskData = null, maskWidth = 0, maskHeight = 0,
@@ -644,7 +724,8 @@ function paintHertzmann(env) {
 
       const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette);
 
-      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount);
+      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount,
+                        getStrokeTexture(brushTex, ri, sx, sy));
     }
 
     onProgress((ri + 1) / radii.length);
@@ -657,7 +738,7 @@ function paintHertzmann(env) {
 // (smoothed) image gradient, clipped where they would cross a strong edge.
 
 function paintLitwinowicz(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex } = env;
   const { maxStrokeLength, minStrokeLength, gridFactor, opacity,
           impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
   const rand = mulberry32(0xC0FFEE);
@@ -724,7 +805,8 @@ function paintLitwinowicz(env) {
     const color = finalizeStrokeColor(
       refBlur[idx * 3], refBlur[idx * 3 + 1], refBlur[idx * 3 + 2], params, palette, rand);
     renderStrokeSolid(canvasRGB, [p0, p1], radius, color, opacity, w, h,
-                      heightBuf, impastoStrength, dryBrushAmount);
+                      heightBuf, impastoStrength, dryBrushAmount,
+                      getStrokeTexture(brushTex, 0, cx, cy));
 
     if ((++done & 2047) === 0) onProgress(done / total);
   }
@@ -736,7 +818,7 @@ function paintLitwinowicz(env) {
 // sampled from the source at each dab position.
 
 function paintHaeberli(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex } = env;
   const { maxStrokeLength, gridFactor, opacity, impastoStrength = 0 } = params;
   const rand = mulberry32(0xBADA55);
 
@@ -768,7 +850,8 @@ function paintHaeberli(env) {
         p1 = [x + dx * len / 2, y + dy * len / 2];
       }
       renderStrokeSolid(canvasRGB, [p0, p1], r, color, opacity, w, h,
-                        heightBuf, impastoStrength, 0);
+                        heightBuf, impastoStrength, 0,
+                        getStrokeTexture(brushTex, ri, x, y));
 
       if ((i & 4095) === 0) onProgress((ri + i / nDabs) / radii.length);
     }
@@ -782,7 +865,7 @@ function paintHaeberli(env) {
 // strokes along strong contours, and a deterministic paper-grain pass.
 
 function paintPencil(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex } = env;
   const { maxStrokeLength, minStrokeLength, gridFactor, opacity, tensorSigma = 0 } = params;
   const rand = mulberry32(0x9E3779B9);
 
@@ -815,14 +898,14 @@ function paintPencil(env) {
 
   // One hatch stroke: 3-point polyline with a slight midpoint wobble so
   // strokes read as hand-drawn rather than ruled.
-  const hatchStroke = (cx, cy, theta, len, r, color, op) => {
+  const hatchStroke = (cx, cy, theta, len, r, color, op, tex = null) => {
     const dx = Math.cos(theta), dy = Math.sin(theta);
     const half = len / 2;
     const wob = (rand() - 0.5) * r * 1.2;
     const p0 = [cx - dx * half, cy - dy * half];
     const pm = [cx - dy * wob, cy + dx * wob];
     const p1 = [cx + dx * half, cy + dy * half];
-    renderStrokeSolid(canvasRGB, [p0, pm, p1], r, color, op, w, h, null, 0, 0);
+    renderStrokeSolid(canvasRGB, [p0, pm, p1], r, color, op, w, h, null, 0, 0, tex);
   };
 
   // Passes A/B: hatching (+ cross-hatching in dark regions) per pencil radius.
@@ -846,9 +929,10 @@ function paintPencil(env) {
         const color = pencilColor(idx);
         const op = opacity * (0.45 + 0.55 * d);
 
-        hatchStroke(jx, jy, theta, len, r, color, op);
+        const tex = getStrokeTexture(brushTex, ri, jx, jy);
+        hatchStroke(jx, jy, theta, len, r, color, op, tex);
         // Cross-hatch shadows at ~+80°.
-        if (d > 0.55) hatchStroke(jx, jy, theta + 1.4, len * 0.8, r, color, op * 0.8);
+        if (d > 0.55) hatchStroke(jx, jy, theta + 1.4, len * 0.8, r, color, op * 0.8, tex);
       }
     }
     onProgress((ri + 1) / (nPasses + 1));
@@ -864,7 +948,8 @@ function paintPencil(env) {
       const theta = Math.atan2(edges.gx[idx], -edges.gy[idx]); // ⊥ gradient = along edge
       const len = 3 + rand() * 4;
       const color = pencilColor(idx, 0.6); // darker pigment on contours
-      hatchStroke(x, y, theta, len, rEdge, color, Math.min(1, opacity * 1.4));
+      hatchStroke(x, y, theta, len, rEdge, color, Math.min(1, opacity * 1.4),
+                  getStrokeTexture(brushTex, radii.length - 1, x, y));
     }
   }
 
@@ -932,8 +1017,12 @@ function paintify(imageData, params, onProgress, prevState) {
   const paint = ALGORITHMS[params.algorithm] || paintHertzmann;
   const isHertzmann = paint === paintHertzmann;
 
+  // Brush texture tiles: only built when the effect is on, so strength 0 keeps
+  // the legacy code path with zero overhead.
+  const brushTex = (params.brushTexture > 0) ? makeBrushTextures(radii, params) : null;
+
   const env = {
-    srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress,
+    srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex,
     // Temporal coherence is error-map driven and only supported by Hertzmann.
     prevState: isHertzmann ? (prevState || null) : null,
   };
