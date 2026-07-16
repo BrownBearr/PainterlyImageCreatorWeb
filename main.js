@@ -49,6 +49,7 @@ const PRESET_DEFAULTS = {
   maxStrokeLength: 16, minStrokeLength: 4,
   curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
   hueJitter: 0, satJitter: 0, valJitter: 0,
+  brushTexture: 0,
   underpaintMode: 'blur', fastPreview: false,
 };
 
@@ -61,6 +62,7 @@ const PRESETS = {
     maxStrokeLength: 16, minStrokeLength: 4,
     curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
     hueJitter: 0.05, satJitter: 0.1, valJitter: 0.1,
+    brushTexture: 0.45,
     underpaintMode: 'blur', fastPreview: false,
   },
   expressionist: {
@@ -70,6 +72,7 @@ const PRESETS = {
     maxStrokeLength: 28, minStrokeLength: 8,
     curvature: 1.0, threshold: 40, gridFactor: 0.9, opacity: 0.95,
     hueJitter: 0.15, satJitter: 0.2, valJitter: 0.15,
+    brushTexture: 0.6,
     underpaintMode: 'blur', fastPreview: false,
   },
   pointillist: {
@@ -97,6 +100,7 @@ const PRESETS = {
     maxStrokeLength: 10, minStrokeLength: 4,
     gridFactor: 1.0, opacity: 1.0,
     hueJitter: 0.03, satJitter: 0.05, valJitter: 0.05,
+    brushTexture: 0.5,
     underpaintMode: 'blur', fastPreview: false,
   },
   // ── Haeberli '90 — paint by numbers: random point-sampled daubs ──
@@ -115,6 +119,7 @@ const PRESETS = {
     maxStrokeLength: 14, minStrokeLength: 6,
     gridFactor: 0.8, opacity: 0.45,
     satJitter: 0.05,
+    brushTexture: 0.5,
     underpaintMode: 'none', fastPreview: false,
   },
 };
@@ -145,6 +150,7 @@ function applyPreset(key) {
   setSlider('hue-jitter', p.hueJitter);
   setSlider('sat-jitter', p.satJitter);
   setSlider('val-jitter', p.valJitter);
+  setSlider('brush-texture', p.brushTexture);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
   _applyingPreset = false;
@@ -436,7 +442,11 @@ function getParams() {
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
     satJitter:       parseFloat(document.getElementById('sat-jitter').value) || 0,
+    brushTexture:    parseFloat(document.getElementById('brush-texture').value) || 0,
     paletteSize:          exp ? (parseInt(document.getElementById('palette-size').value, 10) || 0) : 0,
+    // 0 → worker's built-in density default; null → worker's default taper.
+    bristleDensity:       expVal('bristle-density'),
+    textureTaper:         exp ? (parseFloat(document.getElementById('texture-taper').value) || 0) : null,
     dryBrushAmount:       expVal('dry-brush'),
     tensorSigma:          expVal('tensor-sigma'),
     hueJitter:            expVal('hue-jitter'),
@@ -606,6 +616,7 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
  ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
+ ['brush-texture','brush-texture-val'], ['bristle-density','bristle-density-val'], ['texture-taper','texture-taper-val'],
  ['palette-size','palette-size-val'], ['dry-brush','dry-brush-val'], ['tensor-sigma','tensor-sigma-val'],
  ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
  ['frame-diff','frame-diff-val']]
@@ -670,6 +681,7 @@ document.getElementById('experimental-toggle').addEventListener('change', update
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
  'threshold', 'grid-factor', 'opacity', 'palette-size', 'dry-brush', 'tensor-sigma',
  'hue-jitter', 'sat-jitter', 'val-jitter',
+ 'brush-texture', 'bristle-density', 'texture-taper',
  'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
   .forEach(id => {
     const el = document.getElementById(id);

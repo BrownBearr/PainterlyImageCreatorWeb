@@ -192,6 +192,11 @@
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <label>Brush texture <span class="tip" tabindex="0" data-tip="Bristle texture inside each stroke: paint streaks, dry breaks, and tapered ends. 0 = flat solid strokes (fastest); higher = more visible bristles.">i</span> <span class="val" id="brush-texture-val">0</span></label>
+        <input type="range" id="brush-texture" min="0" max="1" value="0" step="0.05" />
+      </div>
+
       <div class="field" data-algos="hertzmann litwinowicz haeberli">
         <label>Underpainting <span class="tip" tabindex="0" data-tip="What the canvas starts as before strokes: a blurred copy (fills gaps invisibly), the image's average color, or plain white (gaps show as white).">i</span></label>
         <select id="underpaint-mode">
@@ -256,6 +261,16 @@
         <div class="field" data-algos="hertzmann litwinowicz haeberli">
           <label>Light angle (°) <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from, in degrees (0 = right, 90 = top).">i</span> <span class="val" id="light-angle-val">45</span></label>
           <input type="range" id="light-angle" min="0" max="360" value="45" step="5" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Bristle density <span class="tip" tabindex="0" data-tip="How many bristle gaps each brush has. Lower = a few wide streaks (coarse brush); higher = many fine streaks. Only visible when Brush texture is above 0.">i</span> <span class="val" id="bristle-density-val">10</span></label>
+          <input type="range" id="bristle-density" min="4" max="24" value="10" step="1" />
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+          <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. 0 = blunt ends; 1 = sharp pointed tips. Only visible when Brush texture is above 0.">i</span> <span class="val" id="texture-taper-val">0.4</span></label>
+          <input type="range" id="texture-taper" min="0" max="1" value="0.4" step="0.05" />
         </div>
       </div>
     </div>
