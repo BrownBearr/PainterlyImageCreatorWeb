@@ -488,8 +488,10 @@ function startImageRender() {
   downloadBtn.disabled = true;
 
   const id = sourceImageData;
-  if (worker) worker.terminate();
-  worker = new Worker('worker.js');
+  // Reuse the worker between renders: it is always idle here (isRendering
+  // guard), and keeping it alive keeps the neural ORT session and downloaded
+  // model warm. Cancel terminates it and nulls the reference.
+  if (!worker) worker = new Worker('worker.js');
 
   worker.onmessage = (e) => {
     if (e.data.type === 'progress') {
@@ -522,6 +524,12 @@ function startImageRender() {
 
 async function startVideoProcess() {
   if (!videoFile || isRendering) return;
+  // Soft warning, not a block: neural painting is orders of magnitude slower
+  // than the classic algorithms, and videos have hundreds of frames.
+  if (getParams().algorithm === 'neural' &&
+      !confirm('Neural painting takes roughly 5–60 seconds per frame, so a full video can take hours. Continue?')) {
+    return;
+  }
   isRendering = true;
   updateButtonStates();
   progressWrap.style.display = 'block';
