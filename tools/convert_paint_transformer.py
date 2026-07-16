@@ -107,14 +107,14 @@ def main(model_path, out_dir):
     )
 
     import onnx
-    from onnxconverter_common import float16
-    model = onnx.load(out_fp32)
-    # Cast must stay in the block list: the exported attention layers contain
-    # Cast nodes whose declared types the converter would otherwise corrupt.
-    model_fp16 = float16.convert_float_to_float16(
-        model, keep_io_types=True,
-        op_block_list=float16.DEFAULT_OP_BLOCK_LIST + ["Cast"])
-    onnx.save(model_fp16, out_fp16)
+    # onnxruntime's transformer-aware fp16 converter. onnxconverter-common's
+    # generic one corrupts the Cast/Div nodes inside the exported attention
+    # layers (mixed fp16/fp32 inputs) and its shape-inference pass hangs on
+    # this graph — do not switch back.
+    from onnxruntime.transformers.onnx_model import OnnxModel
+    model = OnnxModel(onnx.load(out_fp32))
+    model.convert_float_to_float16(keep_io_types=True)
+    onnx.save(model.model, out_fp16)
 
     # Self-check: torch vs ONNX Runtime on fresh random input, both precisions.
     import onnxruntime as ort
