@@ -677,8 +677,15 @@ function showTip(e) {
   tooltipEl.textContent = tip;
   tooltipEl.classList.add('show');
   const r = e.currentTarget.getBoundingClientRect();
-  tooltipEl.style.left = Math.min(r.right + 8, window.innerWidth - 252) + 'px';
-  const top = Math.max(8, Math.min(r.top - 4, window.innerHeight - tooltipEl.offsetHeight - 8));
+  const gap = 8;
+  const tw = tooltipEl.offsetWidth, th = tooltipEl.offsetHeight;
+  // Sit just to the right of the badge; flip to its left if that would overflow.
+  let left = r.right + gap;
+  if (left + tw > window.innerWidth - 8) left = r.left - gap - tw;
+  left = Math.max(8, left);
+  // Vertically center on the badge, clamped to the viewport.
+  const top = Math.max(8, Math.min(r.top + r.height / 2 - th / 2, window.innerHeight - th - 8));
+  tooltipEl.style.left = left + 'px';
   tooltipEl.style.top = top + 'px';
 }
 

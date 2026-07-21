@@ -736,11 +736,18 @@ function applyImpastoLighting(env) {
   const { lightAngle = 45, impastoLightStrength = 0 } = params;
   if (!heightBuf || impastoLightStrength <= 0) return;
 
-  const ambient = 0.6;
   const angleRad = (lightAngle * Math.PI) / 180;
   const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
   const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
+
+  // Lighting is relative to a flat surface: a pixel with no paint relief has
+  // normal (0,0,1) and dot = nlz, which we treat as neutral (light = 1). Only
+  // the deviation from flat lightens ridges / shadows valleys, so flat regions
+  // keep their color instead of the whole image being multiplied down. `gain`
+  // makes the relief read stronger without reintroducing global darkening.
+  const dotFlat = nlz;
+  const gain = 2.5;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -750,8 +757,8 @@ function applyImpastoLighting(env) {
       // Surface normal: (-dzdx, -dzdy, 1) normalized
       const nx = -dzdx, ny = -dzdy, nz = 1.0;
       const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      const dot = Math.max(0, (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz);
-      const light = ambient + impastoLightStrength * dot;
+      const dot = (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz;
+      const light = Math.max(0.35, Math.min(1.8, 1 + impastoLightStrength * gain * (dot - dotFlat)));
       const ci = (y * w + x) * 3;
       canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
       canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
