@@ -204,6 +204,11 @@
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
+      <div class="field" data-algos="hertzmann">
+        <label>Size jitter <span class="tip" tabindex="0" data-tip="Random per-stroke brush-size variation. A little (0.1–0.3) breaks up the uniform look of each layer; 0 = every stroke in a layer is the same size.">i</span> <span class="val" id="size-jitter-val">0</span></label>
+        <input type="range" id="size-jitter" min="0" max="1" value="0" step="0.05" />
+      </div>
+
       <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
         <label>Brush texture <span class="tip" tabindex="0" data-tip="Bristle texture inside each stroke: paint streaks, dry breaks, and tapered ends. 0 = flat solid strokes (fastest); higher = more visible bristles.">i</span> <span class="val" id="brush-texture-val">0</span></label>
         <input type="range" id="brush-texture" min="0" max="1" value="0" step="0.05" />
@@ -230,69 +235,143 @@
       </label>
     </div>
 
-    <!-- Experimental settings (hidden behind toggle) -->
+    <!-- Experimental settings — advanced knobs as coarse presets. -->
     <div class="sidebar-section" id="experimental-section">
       <h2>Experimental</h2>
-      <label class="checkbox-row">
-        <input type="checkbox" id="experimental-toggle" />
-        Enable experimental settings
-        <span class="tip" tabindex="0" data-tip="Shows advanced settings. While off, all of them are treated as disabled so results stay predictable.">i</span>
-      </label>
 
-      <div id="experimental-fields" style="display:none">
+      <div id="experimental-fields">
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
-          <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; 0 = none.">i</span> <span class="val" id="hue-jitter-val">0</span></label>
-          <input type="range" id="hue-jitter" min="0" max="1" value="0" step="0.05" />
+          <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; Off = none.">i</span></label>
+          <select id="hue-jitter">
+            <option value="0">Off</option>
+            <option value="0.1">Subtle</option>
+            <option value="0.2">Medium</option>
+            <option value="0.3">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
-          <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; 0 = none.">i</span> <span class="val" id="val-jitter-val">0</span></label>
-          <input type="range" id="val-jitter" min="0" max="1" value="0" step="0.05" />
+          <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; Off = none.">i</span></label>
+          <select id="val-jitter">
+            <option value="0">Off</option>
+            <option value="0.1">Subtle</option>
+            <option value="0.2">Medium</option>
+            <option value="0.3">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
-          <label>Palette size (0 = off) <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. 0 = off; low values (6–12) give a poster or gouache look.">i</span> <span class="val" id="palette-size-val">0</span></label>
-          <input type="range" id="palette-size" min="0" max="32" value="0" step="1" />
+          <label>Palette size <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. Off = full color; fewer colors give a poster or gouache look.">i</span></label>
+          <select id="palette-size">
+            <option value="0">Off (full color)</option>
+            <option value="8">8 colors</option>
+            <option value="16">16 colors</option>
+            <option value="32">32 colors</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann">
+          <label>Angle jitter <span class="tip" tabindex="0" data-tip="Random per-step wobble in stroke direction, for a looser hand-made feel. Strong can look chaotic. Off = strokes follow image contours exactly.">i</span></label>
+          <select id="angle-jitter">
+            <option value="0">Off</option>
+            <option value="5">Subtle</option>
+            <option value="12">Medium</option>
+            <option value="25">Strong</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann">
+          <label>Opacity jitter <span class="tip" tabindex="0" data-tip="Random per-stroke transparency variation, so some strokes read heavier than others. Off = every stroke uses the base opacity.">i</span></label>
+          <select id="opacity-jitter">
+            <option value="0">Off</option>
+            <option value="0.1">Subtle</option>
+            <option value="0.25">Medium</option>
+            <option value="0.45">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz">
-          <label>Dry-brush falloff <span class="tip" tabindex="0" data-tip="Fades each stroke toward its tail like a brush running out of paint. Higher = shorter-looking, scratchier strokes.">i</span> <span class="val" id="dry-brush-val">0</span></label>
-          <input type="range" id="dry-brush" min="0" max="1" value="0" step="0.05" />
+          <label>Dry-brush falloff <span class="tip" tabindex="0" data-tip="Fades each stroke toward its tail like a brush running out of paint. Higher = shorter-looking, scratchier strokes.">i</span></label>
+          <select id="dry-brush">
+            <option value="0">Off</option>
+            <option value="0.3">Subtle</option>
+            <option value="0.6">Medium</option>
+            <option value="0.9">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
-          <label>Direction smoothing σ <span class="tip" tabindex="0" data-tip="Smooths the stroke-direction field so nearby strokes flow together. Higher = calmer, more coherent flow; 0 = raw per-pixel directions.">i</span> <span class="val" id="tensor-sigma-val">0</span></label>
-          <input type="range" id="tensor-sigma" min="0" max="10" value="0" step="0.5" />
+          <label>Direction smoothing <span class="tip" tabindex="0" data-tip="Smooths the stroke-direction field so nearby strokes flow together. Higher = calmer, more coherent flow; Off = raw per-pixel directions.">i</span></label>
+          <select id="tensor-sigma">
+            <option value="0">Off</option>
+            <option value="1.5">Subtle</option>
+            <option value="3">Medium</option>
+            <option value="6">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
-          <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light strength is above 0.">i</span> <span class="val" id="impasto-strength-val">0</span></label>
-          <input type="range" id="impasto-strength" min="0" max="2" value="0" step="0.05" />
+          <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light is above Off.">i</span></label>
+          <select id="impasto-strength">
+            <option value="0">Off</option>
+            <option value="0.5">Subtle</option>
+            <option value="1">Medium</option>
+            <option value="1.5">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
-          <label>Impasto light strength <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; 0 = flat.">i</span> <span class="val" id="impasto-light-val">0</span></label>
-          <input type="range" id="impasto-light" min="0" max="2" value="0" step="0.05" />
+          <label>Impasto light <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; Off = flat.">i</span></label>
+          <select id="impasto-light">
+            <option value="0">Off</option>
+            <option value="0.5">Subtle</option>
+            <option value="1">Medium</option>
+            <option value="1.5">Strong</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
-          <label>Light angle (°) <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from, in degrees (0 = right, 90 = top).">i</span> <span class="val" id="light-angle-val">45</span></label>
-          <input type="range" id="light-angle" min="0" max="360" value="45" step="5" />
+          <label>Light angle <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="light-angle">
+            <option value="135">Top-left</option>
+            <option value="90">Top</option>
+            <option value="45" selected>Top-right</option>
+            <option value="0">Right</option>
+            <option value="315">Bottom-right</option>
+            <option value="270">Bottom</option>
+            <option value="225">Bottom-left</option>
+            <option value="180">Left</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
-          <label>Bristle density <span class="tip" tabindex="0" data-tip="How many bristle gaps each brush has. Lower = a few wide streaks (coarse brush); higher = many fine streaks. Only visible when Brush texture is above 0.">i</span> <span class="val" id="bristle-density-val">10</span></label>
-          <input type="range" id="bristle-density" min="4" max="24" value="10" step="1" />
+          <label>Bristle density <span class="tip" tabindex="0" data-tip="How many bristle gaps each brush has. Coarse = a few wide streaks; Very fine = many fine streaks. Only visible when Brush texture is above 0.">i</span></label>
+          <select id="bristle-density">
+            <option value="6">Coarse</option>
+            <option value="10" selected>Medium</option>
+            <option value="16">Fine</option>
+            <option value="24">Very fine</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
-          <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. 0 = blunt ends; 1 = sharp pointed tips. Only visible when Brush texture is above 0.">i</span> <span class="val" id="texture-taper-val">0.4</span></label>
-          <input type="range" id="texture-taper" min="0" max="1" value="0.4" step="0.05" />
+          <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. Blunt = square ends; Sharp = pointed tips. Only visible when Brush texture is above 0.">i</span></label>
+          <select id="texture-taper">
+            <option value="0">Blunt</option>
+            <option value="0.4" selected>Slight</option>
+            <option value="0.6">Medium</option>
+            <option value="0.85">Sharp</option>
+          </select>
         </div>
 
         <div class="field" data-algos="hertzmann litwinowicz haeberli">
-          <label>Salience center bias <span class="tip" tabindex="0" data-tip="Assumes the subject is near the middle of the frame: detail fades toward the corners. 0 = no positional bias.">i</span> <span class="val" id="salience-center-val">0.3</span></label>
-          <input type="range" id="salience-center" min="0" max="1" value="0.3" step="0.05" />
+          <label>Salience center bias <span class="tip" tabindex="0" data-tip="Assumes the subject is near the middle of the frame: detail fades toward the corners. Off = no positional bias.">i</span></label>
+          <select id="salience-center">
+            <option value="0">Off</option>
+            <option value="0.3" selected>Subtle</option>
+            <option value="0.6">Medium</option>
+            <option value="0.9">Strong</option>
+          </select>
         </div>
 
         <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli">
