@@ -49,6 +49,7 @@ const PRESET_DEFAULTS = {
   maxStrokeLength: 16, minStrokeLength: 4,
   curvature: 1.0, threshold: 50, gridFactor: 1.0, opacity: 0.9,
   hueJitter: 0, satJitter: 0, valJitter: 0,
+  sizeJitter: 0, angleJitter: 0, opacityJitter: 0,
   brushTexture: 0,
   salienceOn: false, salienceStrength: 0.5,
   neuralLevels: 4,
@@ -131,7 +132,21 @@ let _applyingPreset = false;
 function setSlider(id, val) {
   const inp = document.getElementById(id);
   const lbl = document.getElementById(id + '-val');
-  if (inp) inp.value = val;
+  if (inp) {
+    if (inp.tagName === 'SELECT') {
+      // Preset values are continuous; snap to the nearest discrete option.
+      let best = null, bestD = Infinity;
+      for (const o of inp.options) {
+        const ov = parseFloat(o.value);
+        if (!isFinite(ov)) continue;
+        const d = Math.abs(ov - val);
+        if (d < bestD) { bestD = d; best = o.value; }
+      }
+      if (best !== null) inp.value = best;
+    } else {
+      inp.value = val;
+    }
+  }
   if (lbl) lbl.textContent = val;
 }
 
@@ -152,6 +167,9 @@ function applyPreset(key) {
   setSlider('hue-jitter', p.hueJitter);
   setSlider('sat-jitter', p.satJitter);
   setSlider('val-jitter', p.valJitter);
+  setSlider('size-jitter', p.sizeJitter);
+  setSlider('angle-jitter', p.angleJitter);
+  setSlider('opacity-jitter', p.opacityJitter);
   setSlider('brush-texture', p.brushTexture);
   document.getElementById('salience-toggle').checked = p.salienceOn;
   setSlider('salience-strength', p.salienceStrength);
@@ -168,15 +186,14 @@ function markCustom() {
   if (sel.value !== 'custom') sel.value = 'custom';
 }
 
-// ─── Per-algorithm / experimental control visibility ─────────────────────────
+// ─── Per-algorithm control visibility ────────────────────────────────────────
 // Elements carry data-algos="hertzmann litwinowicz …" listing the algorithms
-// they apply to. Controls inside #experimental-fields additionally require the
-// Experimental toggle to be on.
+// they apply to; controls not matching the active algorithm are hidden. The
+// Experimental section is always visible now — each control defaults to a
+// neutral (Off) option, so nothing hidden can secretly affect the result.
 
 function updateControlVisibility() {
   const algo = document.getElementById('algorithm-select').value;
-  const exp  = document.getElementById('experimental-toggle').checked;
-  document.getElementById('experimental-fields').style.display = exp ? '' : 'none';
   document.querySelectorAll('[data-algos]').forEach(el => {
     el.style.display = el.dataset.algos.split(' ').includes(algo) ? '' : 'none';
   });
@@ -431,11 +448,7 @@ function getParams() {
   const radiiRaw = document.getElementById('brush-radii').value;
   const brushRadii = radiiRaw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0 && isFinite(n));
 
-  // When the Experimental toggle is off, all experimental params are forced
-  // to their neutral (no-op) values regardless of slider positions, so hidden
-  // controls can never secretly affect the result. Slider state is preserved.
-  const exp = document.getElementById('experimental-toggle').checked;
-  const expVal = (id) => exp ? (parseFloat(document.getElementById(id).value) || 0) : 0;
+  const num = (id) => parseFloat(document.getElementById(id).value) || 0;
 
   return {
     algorithm:       document.getElementById('algorithm-select').value,
@@ -446,24 +459,25 @@ function getParams() {
     curvature:       parseFloat(document.getElementById('curvature').value) ?? 1.0,
     opacity:         parseFloat(document.getElementById('opacity').value) ?? 0.9,
     gridFactor:      parseFloat(document.getElementById('grid-factor').value) ?? 1.0,
-    satJitter:       parseFloat(document.getElementById('sat-jitter').value) || 0,
-    brushTexture:    parseFloat(document.getElementById('brush-texture').value) || 0,
-    paletteSize:          exp ? (parseInt(document.getElementById('palette-size').value, 10) || 0) : 0,
-    // 0 → worker's built-in density default; null → worker's default taper.
-    bristleDensity:       expVal('bristle-density'),
-    textureTaper:         exp ? (parseFloat(document.getElementById('texture-taper').value) || 0) : null,
+    satJitter:       num('sat-jitter'),
+    sizeJitter:      num('size-jitter'),
+    brushTexture:    num('brush-texture'),
+    paletteSize:          parseInt(document.getElementById('palette-size').value, 10) || 0,
+    bristleDensity:       num('bristle-density'),
+    textureTaper:         num('texture-taper'),
     salienceOn:       document.getElementById('salience-toggle').checked,
     salienceStrength: parseFloat(document.getElementById('salience-strength').value) || 0,
-    // Center bias keeps its slider default even while Experimental is off.
-    salienceCenter:       exp ? (parseFloat(document.getElementById('salience-center').value) || 0) : 0.3,
-    salienceDebug:        exp ? document.getElementById('salience-debug').checked : false,
+    salienceCenter:       num('salience-center'),
+    salienceDebug:        document.getElementById('salience-debug').checked,
     neuralLevels:    parseInt(document.getElementById('neural-levels').value, 10) || 4,
-    dryBrushAmount:       expVal('dry-brush'),
-    tensorSigma:          expVal('tensor-sigma'),
-    hueJitter:            expVal('hue-jitter'),
-    valJitter:            expVal('val-jitter'),
-    impastoStrength:      expVal('impasto-strength'),
-    impastoLightStrength: expVal('impasto-light'),
+    dryBrushAmount:       num('dry-brush'),
+    tensorSigma:          num('tensor-sigma'),
+    hueJitter:            num('hue-jitter'),
+    valJitter:            num('val-jitter'),
+    angleJitter:          num('angle-jitter'),
+    opacityJitter:        num('opacity-jitter'),
+    impastoStrength:      num('impasto-strength'),
+    impastoLightStrength: num('impasto-light'),
     lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
@@ -636,12 +650,10 @@ function setStatus(msg) { statusText.textContent = msg; }
 [['threshold','threshold-val'], ['curvature','curvature-val'], ['opacity','opacity-val'],
  ['grid-factor','grid-factor-val'], ['max-stroke-len','max-stroke-len-val'],
  ['min-stroke-len','min-stroke-len-val'], ['video-fps','video-fps-val'],
- ['hue-jitter','hue-jitter-val'], ['sat-jitter','sat-jitter-val'], ['val-jitter','val-jitter-val'],
- ['brush-texture','brush-texture-val'], ['bristle-density','bristle-density-val'], ['texture-taper','texture-taper-val'],
- ['salience-strength','salience-strength-val'], ['salience-center','salience-center-val'],
+ ['sat-jitter','sat-jitter-val'], ['size-jitter','size-jitter-val'],
+ ['brush-texture','brush-texture-val'],
+ ['salience-strength','salience-strength-val'],
  ['neural-levels','neural-levels-val'],
- ['palette-size','palette-size-val'], ['dry-brush','dry-brush-val'], ['tensor-sigma','tensor-sigma-val'],
- ['impasto-strength','impasto-strength-val'], ['impasto-light','impasto-light-val'], ['light-angle','light-angle-val'],
  ['frame-diff','frame-diff-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
@@ -665,8 +677,15 @@ function showTip(e) {
   tooltipEl.textContent = tip;
   tooltipEl.classList.add('show');
   const r = e.currentTarget.getBoundingClientRect();
-  tooltipEl.style.left = Math.min(r.right + 8, window.innerWidth - 252) + 'px';
-  const top = Math.max(8, Math.min(r.top - 4, window.innerHeight - tooltipEl.offsetHeight - 8));
+  const gap = 8;
+  const tw = tooltipEl.offsetWidth, th = tooltipEl.offsetHeight;
+  // Sit just to the right of the badge; flip to its left if that would overflow.
+  let left = r.right + gap;
+  if (left + tw > window.innerWidth - 8) left = r.left - gap - tw;
+  left = Math.max(8, left);
+  // Vertically center on the badge, clamped to the viewport.
+  const top = Math.max(8, Math.min(r.top + r.height / 2 - th / 2, window.innerHeight - th - 8));
+  tooltipEl.style.left = left + 'px';
   tooltipEl.style.top = top + 'px';
 }
 
@@ -696,14 +715,10 @@ document.getElementById('algorithm-select').addEventListener('change', () => {
   updateControlVisibility();
 });
 
-// Experimental toggle → show/hide fields. Not a paint parameter itself,
-// so it does not mark the preset as Custom.
-document.getElementById('experimental-toggle').addEventListener('change', updateControlVisibility);
-
 // Any manual param edit → switch dropdown to Custom
 ['brush-radii', 'max-stroke-len', 'min-stroke-len', 'curvature',
  'threshold', 'grid-factor', 'opacity', 'palette-size', 'dry-brush', 'tensor-sigma',
- 'hue-jitter', 'sat-jitter', 'val-jitter',
+ 'hue-jitter', 'sat-jitter', 'val-jitter', 'size-jitter', 'angle-jitter', 'opacity-jitter',
  'brush-texture', 'bristle-density', 'texture-taper',
  'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
  'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']

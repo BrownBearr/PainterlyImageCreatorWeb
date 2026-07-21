@@ -53,9 +53,10 @@ All modes share the same sidebar parameters.
 
 ## Parameters & UI conventions
 
-- Normal controls: brush radii, max/min stroke length, curvature, threshold T, grid factor, opacity, saturation jitter, underpainting, fast preview.
-- **Experimental controls** (hue/value jitter, palette size, dry-brush, tensor σ, impasto strength/light/angle) live in `#experimental-fields` behind the `#experimental-toggle` checkbox. Gating happens in `getParams()` in `main.js`: when the toggle is off these params are sent as neutral values regardless of slider state. Never bypass this by reading sliders directly.
-- **Per-algorithm visibility**: elements carry `data-algos="hertzmann litwinowicz …"`; `updateControlVisibility()` in `main.js` shows/hides them on algorithm change, preset apply, and toggle change. When adding a control, give it a `data-algos` attribute and a `.tip` tooltip span.
+- Normal controls (sliders): brush radii, max/min stroke length, curvature, threshold T, grid factor, opacity, saturation jitter, size jitter, brush texture, underpainting, fast preview.
+- **Experimental controls** live in `#experimental-fields` (always visible — no toggle) as `<select>` dropdowns, each with a neutral default option (usually "Off"): hue/value/angle/opacity jitter, palette size, dry-brush, direction smoothing (tensor σ), impasto strength/light, light angle, bristle density, stroke taper, salience center bias. Option `value`s are the raw numeric params, so `getParams()` reads them with `parseFloat`/`parseInt` like any control — no gating. `setSlider()` snaps a preset's continuous value to the nearest option. When adding an experimental control, make it a `<select>` whose default option is neutral so a hidden control can't affect the result.
+- **Per-stroke non-uniformity** (Hertzmann only): `sizeJitter` (radius) and `opacityJitter` are applied per stroke in `paintHertzmann`; `angleJitter` (degrees) rotates each step inside `makeCurvedStroke`. All use `Math.random()` per the Hertzmann RNG convention.
+- **Per-algorithm visibility**: elements carry `data-algos="hertzmann litwinowicz …"`; `updateControlVisibility()` in `main.js` shows/hides them on algorithm change and preset apply. When adding a control, give it a `data-algos` attribute and a `.tip` tooltip span.
 - **Tooltips**: `<span class="tip" tabindex="0" data-tip="…">i</span>` next to each label; a single fixed-position `#tooltip` element (created in `main.js`) is positioned beside the hovered/focused icon — CSS-only tooltips would clip in the scrolling sidebar.
 - **Typography**: follows the Astryx design system font roles — Figtree for both body (`--font-ui`) and headings (`--font-display`, semibold 600 on the 14px × 1.2 geometric scale), Lilex (`--font-mono`) for numeric values.
 

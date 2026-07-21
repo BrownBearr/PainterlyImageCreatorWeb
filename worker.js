@@ -344,8 +344,9 @@ function chooseBestInCell(err, x0, y0, x1, y1, w) {
 // ─── Curved stroke path ───────────────────────────────────────────────────────
 
 function makeCurvedStroke(x0, y0, radius, refBlur, canvasRGB, gx, gy, gmag, w, h, params) {
-  const { maxLen, minLen, curvature } = params;
+  const { maxLen, minLen, curvature, angleJitter = 0 } = params;
   const curv = Math.max(0, Math.min(1, curvature));
+  const angleJitterRad = (angleJitter * Math.PI) / 180;
   const step = Math.max(1, Math.round(radius));
 
   x0 = Math.max(0, Math.min(w - 1, Math.round(x0)));
@@ -385,6 +386,14 @@ function makeCurvedStroke(x0, y0, radius, refBlur, canvasRGB, gx, gy, gmag, w, h
     const nms = Math.sqrt(nx * nx + ny * ny);
     if (nms < 1e-6) break;
     nx /= nms; ny /= nms;
+
+    // Per-step angle jitter: wander the direction slightly for hand-made strokes.
+    if (angleJitterRad > 0) {
+      const th = (Math.random() * 2 - 1) * angleJitterRad;
+      const cs = Math.cos(th), sn = Math.sin(th);
+      const rx = nx * cs - ny * sn, ry = nx * sn + ny * cs;
+      nx = rx; ny = ry;
+    }
 
     x = Math.round(x + step * nx);
     y = Math.round(y + step * ny);
@@ -727,11 +736,18 @@ function applyImpastoLighting(env) {
   const { lightAngle = 45, impastoLightStrength = 0 } = params;
   if (!heightBuf || impastoLightStrength <= 0) return;
 
-  const ambient = 0.6;
   const angleRad = (lightAngle * Math.PI) / 180;
   const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
   const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
+
+  // Lighting is relative to a flat surface: a pixel with no paint relief has
+  // normal (0,0,1) and dot = nlz, which we treat as neutral (light = 1). Only
+  // the deviation from flat lightens ridges / shadows valleys, so flat regions
+  // keep their color instead of the whole image being multiplied down. `gain`
+  // makes the relief read stronger without reintroducing global darkening.
+  const dotFlat = nlz;
+  const gain = 2.5;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -741,8 +757,8 @@ function applyImpastoLighting(env) {
       // Surface normal: (-dzdx, -dzdy, 1) normalized
       const nx = -dzdx, ny = -dzdy, nz = 1.0;
       const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      const dot = Math.max(0, (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz);
-      const light = ambient + impastoLightStrength * dot;
+      const dot = (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz;
+      const light = Math.max(0.35, Math.min(1.8, 1 + impastoLightStrength * gain * (dot - dotFlat)));
       const ci = (y * w + x) * 3;
       canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
       canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
@@ -757,7 +773,8 @@ function paintHertzmann(env) {
   const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState, brushTex, detailMap } = env;
   const { threshold, maxStrokeLength, minStrokeLength, curvature, opacity, gridFactor,
           frameDiffThreshold = 0,
-          impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
+          impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0,
+          sizeJitter = 0, angleJitter = 0, opacityJitter = 0 } = params;
 
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
   // and build a per-pixel diff mask to skip unchanged cells.
@@ -822,14 +839,19 @@ function paintHertzmann(env) {
         if (maxDiff < frameDiffThreshold) continue;
       }
 
+      // Per-stroke non-uniformity: random size and opacity variation (angle
+      // jitter is applied inside makeCurvedStroke). Hertzmann uses Math.random.
+      const strokeRadius = Math.max(1, Math.round(radius * (1 + (Math.random() * 2 - 1) * sizeJitter)));
+      const strokeOpacity = Math.max(0, Math.min(1, opacity * (1 + (Math.random() * 2 - 1) * opacityJitter)));
+
       const { pts, color } = makeCurvedStroke(
-        sx, sy, radius, refBlur, canvasRGB, gx, gy, gmag, w, h,
-        { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature }
+        sx, sy, strokeRadius, refBlur, canvasRGB, gx, gy, gmag, w, h,
+        { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature, angleJitter }
       );
 
       const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette);
 
-      renderStrokeSolid(canvasRGB, pts, radius, strokeColor, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount,
+      renderStrokeSolid(canvasRGB, pts, strokeRadius, strokeColor, strokeOpacity, w, h, heightBuf, impastoStrength, dryBrushAmount,
                         getStrokeTexture(brushTex, ri, sx, sy));
     }
 
