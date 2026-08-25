@@ -13,6 +13,8 @@ Implements five stroke-based rendering (SBR) algorithms — four from classic no
 | **Curved Brush Strokes — Hertzmann '98** | Hertzmann, *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (SIGGRAPH 1998) | Layered coarse→fine curved strokes that follow image contours. The default and most tunable style. |
 | **Impressionist Strokes — Litwinowicz '97** | Litwinowicz, *Processing Images and Video for an Impressionist Effect* (SIGGRAPH 1997) | Short oriented strokes on a jittered grid, clipped at strong edges so paint never bleeds across object boundaries. |
 | **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
+| **Strokes by Image Moments — Shiraishi '00** | Shiraishi & Yamaguchi, *An Algorithm for Automatic Painterly Rendering Based on Local Source Image Approximation* (NPAR 2000) | Rectangular strokes fitted to local color regions via second-order image moments — each stroke's position, angle, length, and width follow the region it covers. Flat, patchwork-like paint areas. |
+| **Voronoi Stippling — Secord '02** | Secord, *Weighted Voronoi Stippling* (NPAR 2002) | Thousands of ink dots distributed by Lloyd relaxation, dense in dark areas, sparse in light ones — the classic hand-stippled illustration look. |
 | **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
 | **Neural Paint Transformer — Liu '21** | Liu et al., *Paint Transformer: Feed Forward Neural Painting with Stroke Prediction* (ICCV 2021) | A transformer predicts, coarse to fine, the set of strokes that best reconstructs the image. Runs entirely in your browser via onnxruntime-web (WebGPU with wasm fallback) — first use downloads the ~19 MB model once and caches it. Slower than the classic styles but places strokes globally rather than by local heuristics. |
 
@@ -273,6 +275,30 @@ When enabled, the image is downscaled to a maximum of 400 px on either side befo
 
 ---
 
+#### Seed
+**Default:** 0
+
+Random-number seed. The same seed with the same settings reproduces the exact same painting in every style; change it to get a different arrangement of strokes. The seed stays fixed across video and batch frames, which keeps stroke placement stable frame to frame.
+
+---
+
+#### Stippling controls (Voronoi Stippling only)
+
+| Control | Default | Effect |
+|---|---|---|
+| **Stipple points** | 8000 | Number of ink dots. More = darker, finer-grained reproduction. |
+| **Relaxation** | 12 | Lloyd relaxation iterations. More spreads dots into an even, hand-stippled distribution; 0 leaves the raw random sampling. |
+| **Dot size min / max** | 1 / 3 | Dot radius in the lightest / darkest areas. |
+| **Invert density** | off | Place dots in light areas instead of dark ones. |
+
+---
+
+#### Impasto profile, Light elevation, Gloss (experimental)
+
+Extensions of the impasto relief (Hertzmann 2002 *Fast Paint Texture*). **Impasto profile** picks the height model: *Flat (classic)* accumulates stroke coverage; *Rounded* gives each stroke a ridge along its spine that composites like real paint; *Rounded + bristle* carves brush-texture grooves into the ridge. **Light elevation** sets how high the light sits (low raking light exaggerates relief). **Gloss** adds a specular sheen to the ridges, like wet oil paint. All only take effect when Impasto light is above Off.
+
+---
+
 ### Presets
 
 The **Preset** dropdown sets all parameters at once — including which algorithm is used. Presets are grouped by algorithm in the dropdown:
@@ -285,6 +311,8 @@ The **Preset** dropdown sets all parameters at once — including which algorith
 | **Wash** | Hertzmann '98 | Large translucent strokes with high colour jitter — loose watercolour |
 | **Impressionist Strokes** | Litwinowicz '97 | Dense short oriented strokes, crisp object edges |
 | **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
+| **Patchwork** | Shiraishi '00 | Moment-fitted strokes that follow local color regions |
+| **Stippled** | Secord '02 | Evenly-spaced ink dots, dense in shadows |
 | **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
 
 Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
