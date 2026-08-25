@@ -10,6 +10,7 @@ let isRendering = false;
 
 let sourceImageData = null;
 let maskImageData   = null;
+let paperImageData  = null;   // bundled assets/paper.png, decoded once
 let videoFile       = null;
 let batchFiles      = [];
 let resultBlob      = null;
@@ -58,6 +59,8 @@ const PRESET_DEFAULTS = {
   orientationFill: 0,
   stipplePoints: 8000, stippleIters: 12,
   stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+  watercolorEdge: 0, watercolorTurbulence: 0, watercolorWobble: 0,
+  paperTexture: 0,
 };
 
 const PRESETS = {
@@ -136,6 +139,17 @@ const PRESETS = {
     satJitter: 0.1, valJitter: 0.08,
     underpaintMode: 'average', fastPreview: false,
   },
+  // ── Bousseau '06 — watercolor: abstracted washes + pigment-density effects ──
+  washflow: {
+    algorithm: 'watercolor',
+    brushRadii: '16, 8, 4',
+    maxStrokeLength: 24, minStrokeLength: 8,
+    gridFactor: 1.0, opacity: 0.8,
+    satJitter: 0.08,
+    underpaintMode: 'blur', fastPreview: false,
+    watercolorEdge: 0.7, watercolorTurbulence: 0.5, watercolorWobble: 3,
+    paperTexture: 0.7,
+  },
   // ── Colored pencil sketch — hatching strokes on white paper ──
   pencilsketch: {
     algorithm: 'pencil',
@@ -204,6 +218,10 @@ function applyPreset(key) {
   setSlider('stipple-dot-min', p.stippleDotMin);
   setSlider('stipple-dot-max', p.stippleDotMax);
   document.getElementById('stipple-invert').checked = p.stippleInvert;
+  setSlider('watercolor-edge', p.watercolorEdge);
+  setSlider('watercolor-turbulence', p.watercolorTurbulence);
+  setSlider('watercolor-wobble', p.watercolorWobble);
+  setSlider('paper-texture', p.paperTexture);
   _applyingPreset = false;
   updateControlVisibility();
 }
@@ -470,6 +488,35 @@ document.getElementById('clear-mask').addEventListener('click', () => {
   document.getElementById('mask-label').textContent = 'No mask loaded';
 });
 
+// ─── Bundled paper texture ───────────────────────────────────────────────────
+// One fixed image shipped with the app (no upload control). Decoded once and
+// cached; the pixels ride along in params so the worker can composite it.
+
+let _paperPromise = null;
+
+function ensurePaperLoaded() {
+  if (paperImageData) return Promise.resolve(paperImageData);
+  if (_paperPromise) return _paperPromise;
+  _paperPromise = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const off = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+      const c = off.getContext('2d');
+      c.drawImage(img, 0, 0);
+      paperImageData = c.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+      resolve(paperImageData);
+    };
+    // A missing texture must not break rendering — the paper pass is inert
+    // without pixels, so resolve null and carry on.
+    img.onerror = () => resolve(null);
+    img.src = 'assets/paper.png';
+  });
+  return _paperPromise;
+}
+
+// Warm the cache at startup so the first render never waits on it.
+ensurePaperLoaded();
+
 // ─── Parameter reading ────────────────────────────────────────────────────────
 
 function getParams() {
@@ -477,6 +524,11 @@ function getParams() {
   const brushRadii = radiiRaw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0 && isFinite(n));
 
   const num = (id) => parseFloat(document.getElementById(id).value) || 0;
+
+  // Paper pixels only travel when the effect is actually on, so the default
+  // path posts exactly the same params it always did.
+  const paperTexture = num('paper-texture');
+  const paperOn = paperTexture > 0 && paperImageData;
 
   return {
     algorithm:       document.getElementById('algorithm-select').value,
@@ -517,6 +569,13 @@ function getParams() {
     stippleDotMin:        num('stipple-dot-min'),
     stippleDotMax:        num('stipple-dot-max'),
     stippleInvert:        document.getElementById('stipple-invert').checked,
+    watercolorEdge:       num('watercolor-edge'),
+    watercolorTurbulence: num('watercolor-turbulence'),
+    watercolorWobble:     num('watercolor-wobble'),
+    paperTexture,
+    paperData:   paperOn ? new Uint8ClampedArray(paperImageData.data) : null,
+    paperWidth:  paperOn ? paperImageData.width  : 0,
+    paperHeight: paperOn ? paperImageData.height : 0,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
     maskWidth:  maskImageData ? maskImageData.width  : 0,
@@ -529,7 +588,7 @@ function getParams() {
 
 // ─── Image rendering ──────────────────────────────────────────────────────────
 
-function startImageRender() {
+async function startImageRender() {
   if (!sourceImageData || isRendering) return;
   isRendering = true;
   updateButtonStates();
@@ -565,6 +624,10 @@ function startImageRender() {
     }
   };
   worker.onerror = (e) => { setStatus('Worker error: ' + e.message); finishRender(); };
+
+  // getParams() reads the decoded paper pixels synchronously, so the texture
+  // has to be in hand before the params snapshot is taken.
+  await ensurePaperLoaded();
 
   worker.postMessage({
     type: 'render',
@@ -602,6 +665,7 @@ async function startVideoProcess() {
   });
 
   try {
+    await ensurePaperLoaded();
     await videoProcessor.process(videoFile, getParams(), fps);
   } catch (err) {
     setStatus('Error: ' + err.message);
@@ -629,6 +693,7 @@ async function startBatchProcess() {
   });
 
   try {
+    await ensurePaperLoaded();
     await batchProcessor.process(batchFiles, getParams());
   } catch (err) {
     setStatus('Error: ' + err.message);
@@ -764,7 +829,8 @@ document.getElementById('algorithm-select').addEventListener('change', () => {
  'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
  'impasto-strength', 'impasto-light', 'light-angle', 'impasto-profile', 'light-elevation', 'specular',
  'orientation-fill', 'haeberli-size', 'underpaint-mode', 'fast-preview',
- 'stipple-points', 'stipple-iters', 'stipple-dot-min', 'stipple-dot-max', 'stipple-invert']
+ 'stipple-points', 'stipple-iters', 'stipple-dot-min', 'stipple-dot-max', 'stipple-invert',
+ 'watercolor-edge', 'watercolor-turbulence', 'watercolor-wobble', 'paper-texture']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;

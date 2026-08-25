@@ -15,6 +15,7 @@ Implements five stroke-based rendering (SBR) algorithms — four from classic no
 | **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
 | **Strokes by Image Moments — Shiraishi '00** | Shiraishi & Yamaguchi, *An Algorithm for Automatic Painterly Rendering Based on Local Source Image Approximation* (NPAR 2000) | Rectangular strokes fitted to local color regions via second-order image moments — each stroke's position, angle, length, and width follow the region it covers. Flat, patchwork-like paint areas. |
 | **Voronoi Stippling — Secord '02** | Secord, *Weighted Voronoi Stippling* (NPAR 2002) | Thousands of ink dots distributed by Lloyd relaxation, dense in dark areas, sparse in light ones — the classic hand-stippled illustration look. |
+| **Watercolor — Bousseau '06** | Bousseau et al., *Interactive Watercolor Rendering with Temporal Coherence and Abstraction* (NPAR 2006) | The image is first abstracted into soft flat regions, then broad translucent washes are laid over it and watercolor effects are applied as variations in pigment density: darkening at the rim of each wash, granulation blooming across the paint, and a gentle wobble of the shapes. Pairs naturally with the Paper texture control. |
 | **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
 | **Neural Paint Transformer — Liu '21** | Liu et al., *Paint Transformer: Feed Forward Neural Painting with Stroke Prediction* (ICCV 2021) | A transformer predicts, coarse to fine, the set of strokes that best reconstructs the image. Runs entirely in your browser via onnxruntime-web (WebGPU with wasm fallback) — first use downloads the ~19 MB model once and caches it. Slower than the classic styles but places strokes globally rather than by local heuristics. |
 
@@ -268,6 +269,25 @@ What the canvas is filled with before any strokes are placed.
 
 ---
 
+#### Paper texture
+**Options:** Off · Subtle · Medium · Strong — **Default:** Off
+
+Composites a sheet of watercolor paper underneath the finished painting, so its grain and warm tint show through the paint. The texture is bundled with the app (there is nothing to upload) and is multiplied into the result, which means it reads clearly through light, translucent paint and stays subtle under dark paint.
+
+It works with **every** style, not just Watercolor — it is most visible under the translucent ones (Watercolor, Colored Pencil), and adds a subtle warmth and tooth to the opaque ones. Because it is applied on the final pixels it is included in image, video and batch exports, and because the sheet is a fixed image it stays perfectly stable from video frame to video frame.
+
+---
+
+#### Watercolor controls (Watercolor only)
+
+| Control | Default | Effect |
+|---|---|---|
+| **Edge darkening** | Off | Pigment settling at the rim of each wash — the signature watercolor outline. Higher = crisper, darker wash boundaries. |
+| **Turbulence** | Off | Granulation: pigment density varying across the wash, from broad blooms down to grain caught in the paper's tooth. Higher = more mottled. |
+| **Wobble** | Off | Meanders the region boundaries through a noise field, in pixels, so shapes look hand-laid rather than traced from the photo. |
+
+---
+
 #### Fast preview
 **Default:** off
 
@@ -313,6 +333,7 @@ The **Preset** dropdown sets all parameters at once — including which algorith
 | **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
 | **Patchwork** | Shiraishi '00 | Moment-fitted strokes that follow local color regions |
 | **Stippled** | Secord '02 | Evenly-spaced ink dots, dense in shadows |
+| **Wash Flow** | Bousseau '06 | Layered translucent washes with darkened rims and granulation, on paper |
 | **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
 
 Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.

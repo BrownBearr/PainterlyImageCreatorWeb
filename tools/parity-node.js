@@ -14,7 +14,7 @@ const path = require('path');
 const common = require('./parity-common.js');
 
 const ROOT = path.join(__dirname, '..');
-const WORKER_FILES = ['brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js', 'worker.js'];
+const WORKER_FILES = ['brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js', 'styles/watercolor.js', 'worker.js'];
 
 function buildPaintify() {
   const src = WORKER_FILES

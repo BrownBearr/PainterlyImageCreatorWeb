@@ -61,6 +61,38 @@ function makeParityImage(w = PARITY_W, h = PARITY_H) {
   return { data, width: w, height: h };
 }
 
+// Stand-in paper texture for the paper-composite configs. The shipped
+// assets/paper.png can't be decoded here (no PNG decoder in the Node runner),
+// and the pass only cares that the buffer is RGBA and deterministic.
+function makeParityPaper(pw = 64, ph = 64) {
+  const rng = parityRng(20260825);
+  const data = new Uint8ClampedArray(pw * ph * 4);
+  for (let y = 0; y < ph; y++) {
+    for (let x = 0; x < pw; x++) {
+      const grain = 220 + rng() * 35;
+      const fiber = Math.sin(x * 0.7) * 4 + Math.cos(y * 0.4) * 4;
+      const i = (y * pw + x) * 4;
+      data[i] = grain + fiber;
+      data[i + 1] = grain + fiber - 3;
+      data[i + 2] = grain + fiber - 10;
+      data[i + 3] = 255;
+    }
+  }
+  return { data, width: pw, height: ph };
+}
+
+const PARITY_PAPER = makeParityPaper();
+
+// Params fragment turning the paper composite on at a given strength.
+function parityPaperParams(strength) {
+  return {
+    paperTexture: strength,
+    paperData: PARITY_PAPER.data,
+    paperWidth: PARITY_PAPER.width,
+    paperHeight: PARITY_PAPER.height,
+  };
+}
+
 // FNV-1a 32-bit over the output RGBA buffer.
 function parityHash(u8) {
   let hsh = 0x811c9dc5;
@@ -92,6 +124,8 @@ function parityBaseParams(overrides) {
     fastPreview: false, underpaintMode: 'blur',
     orientationFill: false, haeberliSizeByGradient: false,
     stipplePoints: 8000, stippleIters: 12, stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+    watercolorEdge: 0, watercolorTurbulence: 0, watercolorWobble: 0,
+    paperTexture: 0, paperData: null, paperWidth: 0, paperHeight: 0,
     seed: 1,
   }, overrides);
 }
@@ -116,6 +150,12 @@ const PARITY_CONFIGS = [
   { name: 'shiraishi-texture',  params: parityBaseParams({ algorithm: 'shiraishi', brushRadii: [14, 7, 3], underpaintMode: 'average', brushTexture: 0.5, satJitter: 0.1, impastoStrength: 0.3, impastoLightStrength: 0.3, impastoProfile: 'round' }) },
   { name: 'stipple-plain',      params: parityBaseParams({ algorithm: 'stipple', opacity: 1 }) },
   { name: 'stipple-noiters',    params: parityBaseParams({ algorithm: 'stipple', opacity: 1, stippleIters: 0, stipplePoints: 4000, stippleInvert: true }) },
+  // Watercolor: abstraction branch + the full Bousseau effect pass.
+  { name: 'watercolor-plain',   params: parityBaseParams({ algorithm: 'watercolor', brushRadii: [12, 6, 3], maxStrokeLength: 20, minStrokeLength: 6, opacity: 0.8, watercolorEdge: 0.6, watercolorTurbulence: 0.5, watercolorWobble: 2 }) },
+  // Watercolor: white-paper branch + palette abstraction + paper composite.
+  { name: 'watercolor-paper',   params: parityBaseParams(Object.assign({ algorithm: 'watercolor', brushRadii: [12, 6, 3], maxStrokeLength: 20, minStrokeLength: 6, opacity: 0.8, underpaintMode: 'none', paletteSize: 8, watercolorEdge: 0.4, watercolorTurbulence: 0.6, watercolorWobble: 0 }, parityPaperParams(0.6))) },
+  // Paper composite is global: proves it is deterministic on another algorithm.
+  { name: 'hertzmann-paper',    params: parityBaseParams(parityPaperParams(0.6)) },
 ];
 
 // Committed reference hashes (seed 1). Regenerate with tools/parity-node.js
@@ -140,9 +180,12 @@ const PARITY_BASELINE = {
   'shiraishi-texture': 'bed5d8aa',
   'stipple-plain': 'dd49540b',
   'stipple-noiters': '6e186c5f',
+  'watercolor-plain': '683cd461',
+  'watercolor-paper': '0b610463',
+  'hertzmann-paper': '1d75f99f',
 };
 
 // Allow require() from parity-node.js without breaking the browser.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { PARITY_W, PARITY_H, makeParityImage, parityHash, parityBaseParams, PARITY_CONFIGS, PARITY_BASELINE };
+  module.exports = { PARITY_W, PARITY_H, makeParityImage, makeParityPaper, parityPaperParams, parityHash, parityBaseParams, PARITY_CONFIGS, PARITY_BASELINE };
 }

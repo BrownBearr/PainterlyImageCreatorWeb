@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js');
+importScripts('brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js', 'styles/watercolor.js');
 
 // Seeded PRNG — used by the newer algorithms so stroke placement is
 // deterministic (important for frame-to-frame stability in video mode).
@@ -868,6 +868,34 @@ function applyImpastoLighting(env) {
   }
 }
 
+// Paper-texture substrate: composite the bundled paper image under the
+// finished painting. Multiplicative, so the grain reads through light paint
+// and stays subtle under dark paint — the way pigment sits on real stock.
+// Global (any algorithm), applied as the last pixel pass so it exports
+// identically in image, video and batch modes. The paper image is static, so
+// video frames stay stable. Inert unless both a strength and a decoded paper
+// buffer are supplied, which is what keeps existing baselines byte-identical.
+function applyPaperTexture(env) {
+  const { canvasRGB, w, h, params } = env;
+  const strength = params.paperTexture || 0;
+  const paper = params.paperData;
+  const pw = params.paperWidth | 0, ph = params.paperHeight | 0;
+  if (strength <= 0 || !paper || pw <= 0 || ph <= 0) return;
+
+  for (let y = 0; y < h; y++) {
+    const py = y % ph;
+    for (let x = 0; x < w; x++) {
+      const pi = (py * pw + (x % pw)) * 4;
+      const ci = (y * w + x) * 3;
+      for (let c = 0; c < 3; c++) {
+        // lerp(1, paper, strength) — strength 0 is exactly a no-op.
+        const m = 1 + strength * (paper[pi + c] / 255 - 1);
+        canvasRGB[ci + c] = Math.max(0, Math.min(255, canvasRGB[ci + c] * m));
+      }
+    }
+  }
+}
+
 // ─── Algorithm: Hertzmann 1998 — curved brush strokes of multiple sizes ───────
 
 function paintHertzmann(env) {
@@ -1321,6 +1349,7 @@ const ALGORITHMS = {
   pencil:      paintPencil,      // colored pencil sketch (hatching)
   shiraishi:   paintShiraishi,   // Shiraishi–Yamaguchi 2000 — strokes by image moments (styles/shiraishi.js)
   stipple:     paintStipple,     // Secord 2002 — weighted Voronoi stippling (styles/stipple.js)
+  watercolor:  paintWatercolor,  // Bousseau 2006 — abstraction + pigment density (styles/watercolor.js)
   // 'neural' (Paint Transformer 2021) is registered lazily by ensureNeural()
   // so classic modes never load onnxruntime.
 };
@@ -1417,6 +1446,7 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
   } else {
     await paint(env); // classic algorithms are sync; neural returns a promise
     applyImpastoLighting(env);
+    applyPaperTexture(env);
   }
 
   // Return final ImageData (upscale if fast preview)
