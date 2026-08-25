@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('brush-texture.js');
+importScripts('brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js', 'styles/watercolor.js');
 
 // Seeded PRNG — used by the newer algorithms so stroke placement is
 // deterministic (important for frame-to-frame stability in video mode).
@@ -328,13 +328,13 @@ function buildDetailMap(srcRGB, w, h, params) {
 
 // ─── Grid cell sampling ───────────────────────────────────────────────────────
 
-function chooseBestInCell(err, x0, y0, x1, y1, w) {
+function chooseBestInCell(err, x0, y0, x1, y1, w, rand = Math.random) {
   let bestVal = -1, bestX = x0, bestY = y0, sum = 0, count = 0;
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const e = err[y * w + x];
       sum += e; count++;
-      const jittered = e + Math.random() * 1e-3;
+      const jittered = e + rand() * 1e-3;
       if (jittered > bestVal) { bestVal = jittered; bestX = x; bestY = y; }
     }
   }
@@ -344,7 +344,7 @@ function chooseBestInCell(err, x0, y0, x1, y1, w) {
 // ─── Curved stroke path ───────────────────────────────────────────────────────
 
 function makeCurvedStroke(x0, y0, radius, refBlur, canvasRGB, gx, gy, gmag, w, h, params) {
-  const { maxLen, minLen, curvature, angleJitter = 0 } = params;
+  const { maxLen, minLen, curvature, angleJitter = 0, rand = Math.random } = params;
   const curv = Math.max(0, Math.min(1, curvature));
   const angleJitterRad = (angleJitter * Math.PI) / 180;
   const step = Math.max(1, Math.round(radius));
@@ -389,7 +389,7 @@ function makeCurvedStroke(x0, y0, radius, refBlur, canvasRGB, gx, gy, gmag, w, h
 
     // Per-step angle jitter: wander the direction slightly for hand-made strokes.
     if (angleJitterRad > 0) {
-      const th = (Math.random() * 2 - 1) * angleJitterRad;
+      const th = (rand() * 2 - 1) * angleJitterRad;
       const cs = Math.cos(th), sn = Math.sin(th);
       const rx = nx * cs - ny * sn, ry = nx * sn + ny * cs;
       nx = rx; ny = ry;
@@ -408,7 +408,7 @@ function makeCurvedStroke(x0, y0, radius, refBlur, canvasRGB, gx, gy, gmag, w, h
 
 // ─── Stroke rendering: solid ──────────────────────────────────────────────────
 
-function drawThickSegment(mask, mw, mh, x0, y0, x1, y1, r) {
+function drawThickSegment(mask, mw, mh, x0, y0, x1, y1, r, hmask = null) {
   const dx = x1 - x0, dy = y1 - y0;
   const lenSq = dx * dx + dy * dy;
   const minX = Math.max(0, Math.floor(Math.min(x0, x1) - r));
@@ -430,6 +430,12 @@ function drawThickSegment(mask, mw, mh, x0, y0, x1, y1, r) {
       }
       const v = Math.max(0, Math.min(1, r - dist + 0.5));
       if (v > mask[py * mw + px]) mask[py * mw + px] = v;
+      if (hmask) {
+        // Rounded ridge: dome peaking at the stroke spine, zero at the edge.
+        const dn = dist / Math.max(0.5, r);
+        const hv = Math.sqrt(Math.max(0, 1 - dn * dn));
+        if (hv > hmask[py * mw + px]) hmask[py * mw + px] = hv;
+      }
     }
   }
 }
@@ -438,7 +444,7 @@ function drawThickSegment(mask, mw, mh, x0, y0, x1, y1, r) {
 // sampled in stroke-local (u, v) space, with a taper LUT shrinking the
 // effective radius near the stroke ends. arc0/segLen/totalLen give this
 // segment's arc-length span so u is continuous across segment joins.
-function drawThickSegmentTextured(mask, mw, mh, x0, y0, x1, y1, r, tex, arc0, segLen, totalLen) {
+function drawThickSegmentTextured(mask, mw, mh, x0, y0, x1, y1, r, tex, arc0, segLen, totalLen, hmask = null, bristle = false) {
   const dx = x1 - x0, dy = y1 - y0;
   const lenSq = dx * dx + dy * dy;
   const len = Math.sqrt(lenSq);
@@ -472,13 +478,20 @@ function drawThickSegmentTextured(mask, mw, mh, x0, y0, x1, y1, r, tex, arc0, se
       let tx = ((arc * uScale + uOff) % tw) | 0;
       if (tx < 0) tx += tw;
       const ty = ((vNorm * 0.5 + 0.5) * (th - 1) + 0.5) | 0;
-      const v = cov * (1 - strength + strength * tile[ty * tw + tx]);
+      const tileF = 1 - strength + strength * tile[ty * tw + tx];
+      const v = cov * tileF;
       if (v > mask[py * mw + px]) mask[py * mw + px] = v;
+      if (hmask) {
+        const dn = dist / Math.max(0.5, rEff);
+        let hv = Math.sqrt(Math.max(0, 1 - dn * dn));
+        if (bristle) hv *= tileF; // bristle grooves carved into the ridge
+        if (hv > hmask[py * mw + px]) hmask[py * mw + px] = hv;
+      }
     }
   }
 }
 
-function drawCircle(mask, mw, mh, cx, cy, r, vScale = 1) {
+function drawCircle(mask, mw, mh, cx, cy, r, vScale = 1, hmask = null) {
   const x0 = Math.max(0, Math.floor(cx - r - 1));
   const x1 = Math.min(mw - 1, Math.ceil(cx + r + 1));
   const y0 = Math.max(0, Math.floor(cy - r - 1));
@@ -486,16 +499,30 @@ function drawCircle(mask, mw, mh, cx, cy, r, vScale = 1) {
   for (let py = y0; py <= y1; py++) {
     for (let px = x0; px <= x1; px++) {
       const ex = px - cx, ey = py - cy;
-      const v = Math.max(0, Math.min(1, r - Math.sqrt(ex * ex + ey * ey) + 0.5)) * vScale;
+      const dist = Math.sqrt(ex * ex + ey * ey);
+      const v = Math.max(0, Math.min(1, r - dist + 0.5)) * vScale;
       if (v > mask[py * mw + px]) mask[py * mw + px] = v;
+      if (hmask) {
+        const dn = dist / Math.max(0.5, r);
+        const hv = Math.sqrt(Math.max(0, 1 - dn * dn));
+        if (hv > hmask[py * mw + px]) hmask[py * mw + px] = hv;
+      }
     }
   }
 }
 
-function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount, tex = null) {
+function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightBuf, impastoStrength, dryBrushAmount, tex = null, impastoProfile = 'flat') {
   if (pts.length < 2) return;
   const [sr, sg, sb] = color;
   const nSegs = pts.length - 1;
+
+  // Hertzmann 2002 profile: per-stroke height dome (ridge along the spine,
+  // falloff to the edges, optional bristle grooves) composited like paint,
+  // instead of the legacy flat coverage accumulation. HEIGHT_GAIN keeps the
+  // composited relief comparable to the accumulated legacy heights.
+  const wantProfile = heightBuf && impastoStrength > 0 && impastoProfile !== 'flat';
+  const bristle = impastoProfile === 'bristle';
+  const HEIGHT_GAIN = 3;
 
   // Textured strokes need cumulative arc lengths so the tile's u coordinate is
   // continuous across segment joins. Tile repeats every ~4 radii of arc.
@@ -535,15 +562,16 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
       if (bx1 <= bx0 || by1 <= by0) continue;
       const mw = bx1 - bx0, mh = by1 - by0;
       const mask = new Float32Array(mw * mh);
+      const hmask = wantProfile ? new Float32Array(mw * mh) : null;
       if (tex) {
         drawThickSegmentTextured(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius,
-                                 tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen);
-        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, capR0, capScale);
-        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, capR1, capScale);
+                                 tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen, hmask, bristle);
+        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, capR0, capScale, hmask);
+        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, capR1, capScale, hmask);
       } else {
-        drawThickSegment(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius);
-        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, radius);
-        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, radius);
+        drawThickSegment(mask, mw, mh, sx0-bx0, sy0-by0, sx1-bx0, sy1-by0, radius, hmask);
+        if (seg === 0)        drawCircle(mask, mw, mh, sx0-bx0, sy0-by0, radius, 1, hmask);
+        if (seg === nSegs-1)  drawCircle(mask, mw, mh, sx1-bx0, sy1-by0, radius, 1, hmask);
       }
       for (let my = 0; my < mh; my++) {
         for (let mx = 0; mx < mw; mx++) {
@@ -554,7 +582,11 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
           canvasRGB[ci]     = canvasRGB[ci]     * (1 - a) + sr * a;
           canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + sg * a;
           canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + sb * a;
-          if (heightBuf && impastoStrength > 0) heightBuf[(by0+my)*w+(bx0+mx)] += mv * impastoStrength;
+          if (heightBuf && impastoStrength > 0) {
+            const hi = (by0 + my) * w + (bx0 + mx);
+            if (hmask) heightBuf[hi] = heightBuf[hi] * (1 - a) + hmask[my * mw + mx] * impastoStrength * HEIGHT_GAIN * a;
+            else heightBuf[hi] += mv * impastoStrength;
+          }
         }
       }
     }
@@ -575,20 +607,21 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
 
   const mw = bx1 - bx0, mh = by1 - by0;
   const mask = new Float32Array(mw * mh);
+  const hmask = wantProfile ? new Float32Array(mw * mh) : null;
 
   if (tex) {
     for (let seg = 0; seg < nSegs; seg++) {
       drawThickSegmentTextured(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius,
-                               tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen);
+                               tex, arcLens[seg], arcLens[seg+1] - arcLens[seg], totalLen, hmask, bristle);
     }
-    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, capR0, capScale);
-    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, capR1, capScale);
+    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, capR0, capScale, hmask);
+    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, capR1, capScale, hmask);
   } else {
     for (let seg = 0; seg < nSegs; seg++) {
-      drawThickSegment(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius);
+      drawThickSegment(mask, mw, mh, pts[seg][0]-bx0, pts[seg][1]-by0, pts[seg+1][0]-bx0, pts[seg+1][1]-by0, radius, hmask);
     }
-    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, radius);
-    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, radius);
+    drawCircle(mask, mw, mh, pts[0][0]-bx0, pts[0][1]-by0, radius, 1, hmask);
+    drawCircle(mask, mw, mh, pts[pts.length-1][0]-bx0, pts[pts.length-1][1]-by0, radius, 1, hmask);
   }
 
   for (let my = 0; my < mh; my++) {
@@ -601,10 +634,64 @@ function renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h, heightB
       canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + sg * a;
       canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + sb * a;
       if (heightBuf && impastoStrength > 0) {
-        heightBuf[(by0 + my) * w + (bx0 + mx)] += mv * impastoStrength;
+        const hi = (by0 + my) * w + (bx0 + mx);
+        if (hmask) heightBuf[hi] = heightBuf[hi] * (1 - a) + hmask[my * mw + mx] * impastoStrength * HEIGHT_GAIN * a;
+        else heightBuf[hi] += mv * impastoStrength;
       }
     }
   }
+}
+
+// ─── Stroke sink: the seam between stroke generation and rasterization ────────
+//
+// StrokeRecord — the single currency between style generators and the sink:
+//   {
+//     pts:      [[x,y], ...]   // polyline (fractional OK); a dot is [[x,y],[x,y]]
+//     radius:   number         // capsule radius, px
+//     color:    [r,g,b]        // 0–255, ALREADY final (palette snap + jitter done)
+//     opacity:  number         // 0..1
+//     layer:    number         // radius-layer index (ordering/debug; unused by canvas sink)
+//     tex:      handle|null    // from getStrokeTexture (coverage modulation)
+//     dryBrush: number         // dry-brush fade amount, 0 = unified-mask path
+//     height:   number         // impasto strength contribution, 0 = skip heightBuf
+//     styleData: object?       // style-private extras (ignored by the canvas sink)
+//   }
+//
+// Generators must emit strokes in paint order — the canvas sink rasterizes
+// immediately because stroke growth and error maps read the live canvas.
+
+function makeCanvasSink(env) {
+  return {
+    emit(s) {
+      // `dot: true` fast path: composite an antialiased disc directly, without
+      // the per-stroke mask allocation — stippling emits tens of thousands of
+      // dots and the allocation churn would dominate. No heightBuf support.
+      if (s.dot) {
+        const { canvasRGB, w, h } = env;
+        const cx = s.pts[0][0], cy = s.pts[0][1], r = s.radius;
+        const [sr, sg, sb] = s.color;
+        const x0 = Math.max(0, Math.floor(cx - r - 1)), x1 = Math.min(w - 1, Math.ceil(cx + r + 1));
+        const y0 = Math.max(0, Math.floor(cy - r - 1)), y1 = Math.min(h - 1, Math.ceil(cy + r + 1));
+        for (let py = y0; py <= y1; py++) {
+          for (let px = x0; px <= x1; px++) {
+            const ex = px - cx, ey = py - cy;
+            const cov = Math.max(0, Math.min(1, r - Math.sqrt(ex * ex + ey * ey) + 0.5));
+            const a = cov * s.opacity;
+            if (a <= 0) continue;
+            const ci = (py * w + px) * 3;
+            canvasRGB[ci]     = canvasRGB[ci]     * (1 - a) + sr * a;
+            canvasRGB[ci + 1] = canvasRGB[ci + 1] * (1 - a) + sg * a;
+            canvasRGB[ci + 2] = canvasRGB[ci + 2] * (1 - a) + sb * a;
+          }
+        }
+        return;
+      }
+      renderStrokeSolid(env.canvasRGB, s.pts, s.radius, s.color, s.opacity,
+                        env.w, env.h, env.heightBuf, s.height, s.dryBrush, s.tex,
+                        env.params.impastoProfile || 'flat');
+    },
+    end() {},
+  };
 }
 
 // ─── Palette quantization (k-means, fixed 20 iterations) ─────────────────────
@@ -733,11 +820,12 @@ function applyUnderpaint(env) {
 // Impasto height-map lighting pass (Hertzmann 2002 "Fast Paint Texture").
 function applyImpastoLighting(env) {
   const { canvasRGB, heightBuf, w, h, params } = env;
-  const { lightAngle = 45, impastoLightStrength = 0 } = params;
+  const { lightAngle = 45, impastoLightStrength = 0,
+          lightElevation = 0.5, specularStrength = 0 } = params;
   if (!heightBuf || impastoLightStrength <= 0) return;
 
   const angleRad = (lightAngle * Math.PI) / 180;
-  const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = 0.5;
+  const lx = Math.cos(angleRad), ly = -Math.sin(angleRad), lz = lightElevation;
   const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nlx = lx / llen, nly = ly / llen, nlz = lz / llen;
 
@@ -749,9 +837,17 @@ function applyImpastoLighting(env) {
   const dotFlat = nlz;
   const gain = 2.5;
 
+  // Blinn-Phong specular with viewer at (0,0,1); the flat-surface specular is
+  // subtracted so flat regions stay untouched, matching the diffuse convention.
+  const SHININESS = 24;
+  const hbx = nlx, hby = nly, hbz = nlz + 1;
+  const hbl = Math.sqrt(hbx * hbx + hby * hby + hbz * hbz);
+  const hvx = hbx / hbl, hvy = hby / hbl, hvz = hbz / hbl;
+  const specFlat = Math.pow(Math.max(0, hvz), SHININESS);
+
+  const get = (xx, yy) => heightBuf[Math.max(0, Math.min(h - 1, yy)) * w + Math.max(0, Math.min(w - 1, xx))];
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const get = (xx, yy) => heightBuf[Math.max(0, Math.min(h - 1, yy)) * w + Math.max(0, Math.min(w - 1, xx))];
       const dzdx = (get(x + 1, y) - get(x - 1, y)) * 0.5;
       const dzdy = (get(x, y + 1) - get(x, y - 1)) * 0.5;
       // Surface normal: (-dzdx, -dzdy, 1) normalized
@@ -760,9 +856,42 @@ function applyImpastoLighting(env) {
       const dot = (nx / nlen) * nlx + (ny / nlen) * nly + (nz / nlen) * nlz;
       const light = Math.max(0.35, Math.min(1.8, 1 + impastoLightStrength * gain * (dot - dotFlat)));
       const ci = (y * w + x) * 3;
-      canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light);
-      canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light);
-      canvasRGB[ci + 2] = Math.min(255, canvasRGB[ci + 2] * light);
+      let spec = 0;
+      if (specularStrength > 0) {
+        const ndoth = (nx / nlen) * hvx + (ny / nlen) * hvy + (nz / nlen) * hvz;
+        spec = specularStrength * Math.max(0, Math.pow(Math.max(0, ndoth), SHININESS) - specFlat) * 255;
+      }
+      canvasRGB[ci]     = Math.min(255, canvasRGB[ci]     * light + spec);
+      canvasRGB[ci + 1] = Math.min(255, canvasRGB[ci + 1] * light + spec);
+      canvasRGB[ci + 2] = Math.min(255, canvasRGB[ci + 2] * light + spec);
+    }
+  }
+}
+
+// Paper-texture substrate: composite the bundled paper image under the
+// finished painting. Multiplicative, so the grain reads through light paint
+// and stays subtle under dark paint — the way pigment sits on real stock.
+// Global (any algorithm), applied as the last pixel pass so it exports
+// identically in image, video and batch modes. The paper image is static, so
+// video frames stay stable. Inert unless both a strength and a decoded paper
+// buffer are supplied, which is what keeps existing baselines byte-identical.
+function applyPaperTexture(env) {
+  const { canvasRGB, w, h, params } = env;
+  const strength = params.paperTexture || 0;
+  const paper = params.paperData;
+  const pw = params.paperWidth | 0, ph = params.paperHeight | 0;
+  if (strength <= 0 || !paper || pw <= 0 || ph <= 0) return;
+
+  for (let y = 0; y < h; y++) {
+    const py = y % ph;
+    for (let x = 0; x < w; x++) {
+      const pi = (py * pw + (x % pw)) * 4;
+      const ci = (y * w + x) * 3;
+      for (let c = 0; c < 3; c++) {
+        // lerp(1, paper, strength) — strength 0 is exactly a no-op.
+        const m = 1 + strength * (paper[pi + c] / 255 - 1);
+        canvasRGB[ci + c] = Math.max(0, Math.min(255, canvasRGB[ci + c] * m));
+      }
     }
   }
 }
@@ -770,11 +899,12 @@ function applyImpastoLighting(env) {
 // ─── Algorithm: Hertzmann 1998 — curved brush strokes of multiple sizes ───────
 
 function paintHertzmann(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, prevState, brushTex, detailMap } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, prevState, brushTex, detailMap, sink } = env;
   const { threshold, maxStrokeLength, minStrokeLength, curvature, opacity, gridFactor,
           frameDiffThreshold = 0,
           impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0,
           sizeJitter = 0, angleJitter = 0, opacityJitter = 0 } = params;
+  const rand = mulberry32(0x1E52A11 ^ (params.seed | 0));
 
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
   // and build a per-pixel diff mask to skip unchanged cells.
@@ -816,13 +946,13 @@ function paintHertzmann(env) {
         cells.push([x0, y0]);
       }
     }
-    shuffleArray(cells);
+    shuffleArray(cells, rand);
 
     const isFirstLayer = ri === 0;
 
     for (const [cx0, cy0] of cells) {
       const cx1 = Math.min(w, cx0 + grid), cy1 = Math.min(h, cy0 + grid);
-      const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w);
+      const { sx, sy, meanErr } = chooseBestInCell(err, cx0, cy0, cx1, cy1, w, rand);
 
       // Detail map (mask ∪ salience): lower the threshold where detail is wanted
       const effectiveThreshold = detailMap
@@ -840,23 +970,90 @@ function paintHertzmann(env) {
       }
 
       // Per-stroke non-uniformity: random size and opacity variation (angle
-      // jitter is applied inside makeCurvedStroke). Hertzmann uses Math.random.
-      const strokeRadius = Math.max(1, Math.round(radius * (1 + (Math.random() * 2 - 1) * sizeJitter)));
-      const strokeOpacity = Math.max(0, Math.min(1, opacity * (1 + (Math.random() * 2 - 1) * opacityJitter)));
+      // jitter is applied inside makeCurvedStroke).
+      const strokeRadius = Math.max(1, Math.round(radius * (1 + (rand() * 2 - 1) * sizeJitter)));
+      const strokeOpacity = Math.max(0, Math.min(1, opacity * (1 + (rand() * 2 - 1) * opacityJitter)));
 
       const { pts, color } = makeCurvedStroke(
         sx, sy, strokeRadius, refBlur, canvasRGB, gx, gy, gmag, w, h,
-        { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature, angleJitter }
+        { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature, angleJitter, rand }
       );
 
-      const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette);
+      const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette, rand);
 
-      renderStrokeSolid(canvasRGB, pts, strokeRadius, strokeColor, strokeOpacity, w, h, heightBuf, impastoStrength, dryBrushAmount,
-                        getStrokeTexture(brushTex, ri, sx, sy));
+      sink.emit({
+        pts, radius: strokeRadius, color: strokeColor, opacity: strokeOpacity, layer: ri,
+        tex: getStrokeTexture(brushTex, ri, sx, sy),
+        dryBrush: dryBrushAmount, height: impastoStrength,
+      });
     }
 
     onProgress((ri + 1) / radii.length);
   }
+}
+
+// Litwinowicz 1997 orientation interpolation: stroke angles in weak-gradient
+// areas are filled from strong-gradient pixels via a push-pull pyramid on the
+// doubled-angle field (θ and θ+π are the same stroke direction, so averaging
+// must happen on (cos2θ, sin2θ)). Deviation from the paper: push-pull instead
+// of scattered-data (thin-plate spline) interpolation — O(n), deterministic,
+// visually equivalent. Strong pixels keep their exact legacy angle.
+function fillOrientationTheta(gx, gy, gmag, w, h) {
+  let maxG = 0;
+  for (let i = 0; i < gmag.length; i++) if (gmag[i] > maxG) maxG = gmag[i];
+  const strong = Math.max(1e-4, maxG * 0.1);
+
+  let a = new Float32Array(w * h), b = new Float32Array(w * h), wt = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (gmag[i] >= strong) {
+      const th = Math.atan2(gx[i], -gy[i]);
+      a[i] = Math.cos(2 * th); b[i] = Math.sin(2 * th); wt[i] = 1;
+    }
+  }
+
+  // Push: average valid samples up a 2× pyramid.
+  const levels = [{ a, b, wt, w, h }];
+  let lw = w, lh = h;
+  while (lw > 1 || lh > 1) {
+    const nw = Math.max(1, lw >> 1), nh = Math.max(1, lh >> 1);
+    const na = new Float32Array(nw * nh), nb = new Float32Array(nw * nh), nwt = new Float32Array(nw * nh);
+    const prev = levels[levels.length - 1];
+    for (let y = 0; y < prev.h; y++) {
+      for (let x = 0; x < prev.w; x++) {
+        const i = y * prev.w + x;
+        const j = Math.min(nh - 1, y >> 1) * nw + Math.min(nw - 1, x >> 1);
+        na[j] += prev.a[i]; nb[j] += prev.b[i]; nwt[j] += prev.wt[i];
+      }
+    }
+    levels.push({ a: na, b: nb, wt: nwt, w: nw, h: nh });
+    lw = nw; lh = nh;
+  }
+
+  // Pull: fill holes from the parent level, coarse → fine. Filled entries are
+  // normalized with wt = 1 so they can serve as parents themselves.
+  for (let li = levels.length - 2; li >= 0; li--) {
+    const cur = levels[li], par = levels[li + 1];
+    for (let y = 0; y < cur.h; y++) {
+      for (let x = 0; x < cur.w; x++) {
+        const i = y * cur.w + x;
+        if (cur.wt[i] > 0) continue;
+        const j = Math.min(par.h - 1, y >> 1) * par.w + Math.min(par.w - 1, x >> 1);
+        if (par.wt[j] > 0) {
+          cur.a[i] = par.a[j] / par.wt[j];
+          cur.b[i] = par.b[j] / par.wt[j];
+          cur.wt[i] = 1;
+        }
+      }
+    }
+  }
+
+  const theta = new Float32Array(w * h);
+  const l0 = levels[0];
+  for (let i = 0; i < w * h; i++) {
+    // A fully gradient-free image has no sources at all — keep the 45° fallback.
+    theta[i] = l0.wt[i] > 0 ? 0.5 * Math.atan2(l0.b[i], l0.a[i]) : Math.PI / 4;
+  }
+  return theta;
 }
 
 // ─── Algorithm: Litwinowicz 1997 — impressionist oriented strokes ─────────────
@@ -865,10 +1062,10 @@ function paintHertzmann(env) {
 // (smoothed) image gradient, clipped where they would cross a strong edge.
 
 function paintLitwinowicz(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex, detailMap, sink } = env;
   const { maxStrokeLength, minStrokeLength, gridFactor, opacity,
           impastoStrength = 0, dryBrushAmount = 0, tensorSigma = 0 } = params;
-  const rand = mulberry32(0xC0FFEE);
+  const rand = mulberry32(0xC0FFEE ^ (params.seed | 0));
 
   applyUnderpaint(env);
 
@@ -879,6 +1076,10 @@ function paintLitwinowicz(env) {
   // Smoothed orientation field (the paper smooths/interpolates directions);
   // the Direction smoothing slider overrides the default σ when set.
   const { gx, gy, gmag } = computeGradientsST(refBlur, w, h, tensorSigma > 0 ? tensorSigma : 2.0);
+
+  // Optional paper-style orientation interpolation across weak-gradient areas
+  // (default off = legacy constant 45° fallback).
+  const orientField = params.orientationFill ? fillOrientationTheta(gx, gy, gmag, w, h) : null;
 
   // Raw Sobel magnitude for edge clipping.
   const { gmag: edgeMag } = computeGradients(refBlur, w, h);
@@ -913,9 +1114,12 @@ function paintLitwinowicz(env) {
   for (const [cx, cy] of centers) {
     const idx = cy * w + cx;
 
-    // Stroke direction: perpendicular to the gradient; constant 45° where
-    // the gradient is too weak to be meaningful (paper's fallback).
-    let theta = gmag[idx] > 1e-4 ? Math.atan2(gx[idx], -gy[idx]) : Math.PI / 4;
+    // Stroke direction: perpendicular to the gradient. Where the gradient is
+    // too weak: interpolated from strong pixels when orientation fill is on,
+    // otherwise the legacy constant 45° fallback.
+    let theta = orientField
+      ? orientField[idx]
+      : (gmag[idx] > 1e-4 ? Math.atan2(gx[idx], -gy[idx]) : Math.PI / 4);
     theta += (rand() * 2 - 1) * 0.26; // ±15° perturbation
     const dx = Math.cos(theta), dy = Math.sin(theta);
 
@@ -945,9 +1149,11 @@ function paintLitwinowicz(env) {
     const rStroke = detailMap
       ? Math.max(1, Math.round(radius * (1 - 0.35 * detailMap[idx])))
       : radius;
-    renderStrokeSolid(canvasRGB, [p0, p1], rStroke, color, opacity, w, h,
-                      heightBuf, impastoStrength, dryBrushAmount,
-                      getStrokeTexture(brushTex, 0, cx, cy));
+    sink.emit({
+      pts: [p0, p1], radius: rStroke, color, opacity, layer: 0,
+      tex: getStrokeTexture(brushTex, 0, cx, cy),
+      dryBrush: dryBrushAmount, height: impastoStrength,
+    });
 
     if ((++done & 2047) === 0) onProgress(done / total);
   }
@@ -959,9 +1165,9 @@ function paintLitwinowicz(env) {
 // sampled from the source at each dab position.
 
 function paintHaeberli(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex, detailMap, sink } = env;
   const { maxStrokeLength, gridFactor, opacity, impastoStrength = 0 } = params;
-  const rand = mulberry32(0xBADA55);
+  const rand = mulberry32(0xBADA55 ^ (params.seed | 0));
 
   applyUnderpaint(env);
 
@@ -969,6 +1175,13 @@ function paintHaeberli(env) {
     const r = Math.max(1, Math.round(radii[ri]));
     const refBlur = gaussianBlurRGB(srcRGB, w, h, Math.max(0.5, r * 0.4));
     const { gx, gy, gmag } = computeGradients(refBlur, w, h);
+
+    // Optional Haeberli size-by-detail: shrink dabs where the gradient is
+    // strong so edges get finer daubs (paper's size-by-local-detail option).
+    let maxG = 0;
+    if (params.haeberliSizeByGradient) {
+      for (let i = 0; i < gmag.length; i++) if (gmag[i] > maxG) maxG = gmag[i];
+    }
 
     // Enough dabs to statistically cover the image at this scale.
     const cell = Math.max(1, r * gridFactor);
@@ -992,20 +1205,26 @@ function paintHaeberli(env) {
       }
       // Detail coupling: smaller dabs where the detail map is bright, plus a
       // probabilistic extra dab so salient areas end up denser.
+      const rBase = maxG > 0 ? Math.max(1, Math.round(r / (1 + 2 * (gmag[idx] / maxG)))) : r;
       const d = detailMap ? detailMap[idx] : 0;
-      const rDab = d > 0 ? Math.max(1, Math.round(r * (1 - 0.35 * d))) : r;
-      renderStrokeSolid(canvasRGB, [p0, p1], rDab, color, opacity, w, h,
-                        heightBuf, impastoStrength, 0,
-                        getStrokeTexture(brushTex, ri, x, y));
+      const rDab = d > 0 ? Math.max(1, Math.round(rBase * (1 - 0.35 * d))) : rBase;
+      sink.emit({
+        pts: [p0, p1], radius: rDab, color, opacity, layer: ri,
+        tex: getStrokeTexture(brushTex, ri, x, y),
+        dryBrush: 0, height: impastoStrength,
+      });
       if (d > 0 && rand() < 0.6 * d) {
         const x2 = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * r * 2)));
         const y2 = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * r * 2)));
         const i2 = y2 * w + x2;
         const c2 = finalizeStrokeColor(
           refBlur[i2 * 3], refBlur[i2 * 3 + 1], refBlur[i2 * 3 + 2], params, palette, rand);
-        renderStrokeSolid(canvasRGB, [[x2, y2], [x2, y2]], Math.max(1, Math.round(rDab * 0.8)),
-                          c2, opacity, w, h, heightBuf, impastoStrength, 0,
-                          getStrokeTexture(brushTex, ri, x2, y2));
+        sink.emit({
+          pts: [[x2, y2], [x2, y2]], radius: Math.max(1, Math.round(rDab * 0.8)),
+          color: c2, opacity, layer: ri,
+          tex: getStrokeTexture(brushTex, ri, x2, y2),
+          dryBrush: 0, height: impastoStrength,
+        });
       }
 
       if ((i & 4095) === 0) onProgress((ri + i / nDabs) / radii.length);
@@ -1020,9 +1239,9 @@ function paintHaeberli(env) {
 // strokes along strong contours, and a deterministic paper-grain pass.
 
 function paintPencil(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex } = env;
+  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex, sink } = env;
   const { maxStrokeLength, minStrokeLength, gridFactor, opacity, tensorSigma = 0 } = params;
-  const rand = mulberry32(0x9E3779B9);
+  const rand = mulberry32(0x9E3779B9 ^ (params.seed | 0));
 
   // Pencil always draws on near-white paper, regardless of underpaintMode.
   canvasRGB.fill(252);
@@ -1060,7 +1279,7 @@ function paintPencil(env) {
     const p0 = [cx - dx * half, cy - dy * half];
     const pm = [cx - dy * wob, cy + dx * wob];
     const p1 = [cx + dx * half, cy + dy * half];
-    renderStrokeSolid(canvasRGB, [p0, pm, p1], r, color, op, w, h, null, 0, 0, tex);
+    sink.emit({ pts: [p0, pm, p1], radius: r, color, opacity: op, layer: 0, tex, dryBrush: 0, height: 0 });
   };
 
   // Passes A/B: hatching (+ cross-hatching in dark regions) per pencil radius.
@@ -1128,6 +1347,9 @@ const ALGORITHMS = {
   litwinowicz: paintLitwinowicz, // Litwinowicz 1997 — impressionist strokes
   haeberli:    paintHaeberli,    // Haeberli 1990 — paint by numbers
   pencil:      paintPencil,      // colored pencil sketch (hatching)
+  shiraishi:   paintShiraishi,   // Shiraishi–Yamaguchi 2000 — strokes by image moments (styles/shiraishi.js)
+  stipple:     paintStipple,     // Secord 2002 — weighted Voronoi stippling (styles/stipple.js)
+  watercolor:  paintWatercolor,  // Bousseau 2006 — abstraction + pigment density (styles/watercolor.js)
   // 'neural' (Paint Transformer 2021) is registered lazily by ensureNeural()
   // so classic modes never load onnxruntime.
 };
@@ -1194,6 +1416,25 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
     // Temporal coherence is error-map driven and only supported by Hertzmann.
     prevState: isHertzmann ? (prevState || null) : null,
   };
+  env.sink = makeCanvasSink(env);
+  // Dev-only stroke capture (GPU rasterizer prototype): when params.captureStrokes
+  // is set, record a shallow copy of every emitted StrokeRecord in emit order.
+  // Inert and zero-cost otherwise — the parity harness never sets the flag.
+  if (params.captureStrokes) {
+    env.capturedStrokes = [];
+    const inner = env.sink;
+    env.sink = {
+      emit(s) {
+        env.capturedStrokes.push({
+          pts: s.pts, radius: s.radius, color: s.color, opacity: s.opacity,
+          layer: s.layer, dryBrush: s.dryBrush, height: s.height, dot: s.dot,
+          textured: !!(s.tex && s.tex.strength > 0),
+        });
+        inner.emit(s);
+      },
+      end() { inner.end(); },
+    };
+  }
 
   if (params.salienceDebug) {
     // Debug view: output the detail map itself as grayscale instead of painting.
@@ -1205,6 +1446,7 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
   } else {
     await paint(env); // classic algorithms are sync; neural returns a promise
     applyImpastoLighting(env);
+    applyPaperTexture(env);
   }
 
   // Return final ImageData (upscale if fast preview)
@@ -1222,6 +1464,7 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
   }
 
   const out = { data: resultData, width: origW, height: origH };
+  if (env.capturedStrokes) out.strokes = env.capturedStrokes;
   // Return raw buffers for temporal coherence (only when not fast-previewing,
   // since the scaled canvas would be wrong dimensions for the next frame).
   if (isHertzmann && frameDiffThreshold > 0 && procW === origW && procH === origH) {

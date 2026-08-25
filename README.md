@@ -13,6 +13,9 @@ Implements five stroke-based rendering (SBR) algorithms — four from classic no
 | **Curved Brush Strokes — Hertzmann '98** | Hertzmann, *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (SIGGRAPH 1998) | Layered coarse→fine curved strokes that follow image contours. The default and most tunable style. |
 | **Impressionist Strokes — Litwinowicz '97** | Litwinowicz, *Processing Images and Video for an Impressionist Effect* (SIGGRAPH 1997) | Short oriented strokes on a jittered grid, clipped at strong edges so paint never bleeds across object boundaries. |
 | **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
+| **Strokes by Image Moments — Shiraishi '00** | Shiraishi & Yamaguchi, *An Algorithm for Automatic Painterly Rendering Based on Local Source Image Approximation* (NPAR 2000) | Rectangular strokes fitted to local color regions via second-order image moments — each stroke's position, angle, length, and width follow the region it covers. Flat, patchwork-like paint areas. |
+| **Voronoi Stippling — Secord '02** | Secord, *Weighted Voronoi Stippling* (NPAR 2002) | Thousands of ink dots distributed by Lloyd relaxation, dense in dark areas, sparse in light ones — the classic hand-stippled illustration look. |
+| **Watercolor — Bousseau '06** | Bousseau et al., *Interactive Watercolor Rendering with Temporal Coherence and Abstraction* (NPAR 2006) | The image is first abstracted into soft flat regions, then broad translucent washes are laid over it and watercolor effects are applied as variations in pigment density: darkening at the rim of each wash, granulation blooming across the paint, and a gentle wobble of the shapes. Pairs naturally with the Paper texture control. |
 | **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
 | **Neural Paint Transformer — Liu '21** | Liu et al., *Paint Transformer: Feed Forward Neural Painting with Stroke Prediction* (ICCV 2021) | A transformer predicts, coarse to fine, the set of strokes that best reconstructs the image. Runs entirely in your browser via onnxruntime-web (WebGPU with wasm fallback) — first use downloads the ~19 MB model once and caches it. Slower than the classic styles but places strokes globally rather than by local heuristics. |
 
@@ -266,10 +269,53 @@ What the canvas is filled with before any strokes are placed.
 
 ---
 
+#### Paper texture
+**Options:** Off · Subtle · Medium · Strong — **Default:** Off
+
+Composites a sheet of watercolor paper underneath the finished painting, so its grain and warm tint show through the paint. The texture is bundled with the app (there is nothing to upload) and is multiplied into the result, which means it reads clearly through light, translucent paint and stays subtle under dark paint.
+
+It works with **every** style, not just Watercolor — it is most visible under the translucent ones (Watercolor, Colored Pencil), and adds a subtle warmth and tooth to the opaque ones. Because it is applied on the final pixels it is included in image, video and batch exports, and because the sheet is a fixed image it stays perfectly stable from video frame to video frame.
+
+---
+
+#### Watercolor controls (Watercolor only)
+
+| Control | Default | Effect |
+|---|---|---|
+| **Edge darkening** | Off | Pigment settling at the rim of each wash — the signature watercolor outline. Higher = crisper, darker wash boundaries. |
+| **Turbulence** | Off | Granulation: pigment density varying across the wash, from broad blooms down to grain caught in the paper's tooth. Higher = more mottled. |
+| **Wobble** | Off | Meanders the region boundaries through a noise field, in pixels, so shapes look hand-laid rather than traced from the photo. |
+
+---
+
 #### Fast preview
 **Default:** off
 
 When enabled, the image is downscaled to a maximum of 400 px on either side before painting, then the result is upscaled back to the original size. Produces a rough approximation in a fraction of the time — useful for dialling in parameters before a full-resolution render.
+
+---
+
+#### Seed
+**Default:** 0
+
+Random-number seed. The same seed with the same settings reproduces the exact same painting in every style; change it to get a different arrangement of strokes. The seed stays fixed across video and batch frames, which keeps stroke placement stable frame to frame.
+
+---
+
+#### Stippling controls (Voronoi Stippling only)
+
+| Control | Default | Effect |
+|---|---|---|
+| **Stipple points** | 8000 | Number of ink dots. More = darker, finer-grained reproduction. |
+| **Relaxation** | 12 | Lloyd relaxation iterations. More spreads dots into an even, hand-stippled distribution; 0 leaves the raw random sampling. |
+| **Dot size min / max** | 1 / 3 | Dot radius in the lightest / darkest areas. |
+| **Invert density** | off | Place dots in light areas instead of dark ones. |
+
+---
+
+#### Impasto profile, Light elevation, Gloss (experimental)
+
+Extensions of the impasto relief (Hertzmann 2002 *Fast Paint Texture*). **Impasto profile** picks the height model: *Flat (classic)* accumulates stroke coverage; *Rounded* gives each stroke a ridge along its spine that composites like real paint; *Rounded + bristle* carves brush-texture grooves into the ridge. **Light elevation** sets how high the light sits (low raking light exaggerates relief). **Gloss** adds a specular sheen to the ridges, like wet oil paint. All only take effect when Impasto light is above Off.
 
 ---
 
@@ -285,6 +331,9 @@ The **Preset** dropdown sets all parameters at once — including which algorith
 | **Wash** | Hertzmann '98 | Large translucent strokes with high colour jitter — loose watercolour |
 | **Impressionist Strokes** | Litwinowicz '97 | Dense short oriented strokes, crisp object edges |
 | **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
+| **Patchwork** | Shiraishi '00 | Moment-fitted strokes that follow local color regions |
+| **Stippled** | Secord '02 | Evenly-spaced ink dots, dense in shadows |
+| **Wash Flow** | Bousseau '06 | Layered translucent washes with darkened rims and granulation, on paper |
 | **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
 
 Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.

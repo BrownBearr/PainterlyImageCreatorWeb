@@ -134,6 +134,15 @@
         <optgroup label="Haeberli '90 — Paint by Numbers">
           <option value="daubs">Paint Daubs</option>
         </optgroup>
+        <optgroup label="Shiraishi–Yamaguchi '00 — Strokes by Image Moments">
+          <option value="patchwork">Patchwork</option>
+        </optgroup>
+        <optgroup label="Secord '02 — Weighted Voronoi Stippling">
+          <option value="stippled">Stippled</option>
+        </optgroup>
+        <optgroup label="Bousseau '06 — Watercolor">
+          <option value="washflow">Wash Flow</option>
+        </optgroup>
         <optgroup label="Sketch">
           <option value="pencilsketch">Colored Pencil</option>
         </optgroup>
@@ -148,6 +157,9 @@
         <option value="hertzmann">Curved Brush Strokes — Hertzmann '98</option>
         <option value="litwinowicz">Impressionist Strokes — Litwinowicz '97</option>
         <option value="haeberli">Paint by Numbers — Haeberli '90</option>
+        <option value="shiraishi">Strokes by Image Moments — Shiraishi '00</option>
+        <option value="stipple">Voronoi Stippling — Secord '02</option>
+        <option value="watercolor">Watercolor — Bousseau '06</option>
         <option value="pencil">Colored Pencil Sketch</option>
         <option value="neural">Neural Paint Transformer — Liu '21</option>
       </select>
@@ -159,17 +171,17 @@
     <div class="sidebar-section">
       <h2>Brush Layers</h2>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil shiraishi watercolor">
         <label>Radii (coarse → fine) <span class="tip" tabindex="0" data-tip="Brush sizes in pixels, painted coarse to fine. Bigger first numbers block in large areas; smaller last numbers add detail. Fewer or larger values = more abstract.">i</span></label>
         <input type="text" id="brush-radii" value="8, 4, 2" placeholder="e.g. 8, 4, 2" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil watercolor">
         <label>Max stroke length <span class="tip" tabindex="0" data-tip="The longest a single stroke can grow. Higher = longer, more flowing strokes; lower = short dabs.">i</span> <span class="val" id="max-stroke-len-val">16</span></label>
         <input type="range" id="max-stroke-len" min="1" max="64" value="16" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz pencil">
+      <div class="field" data-algos="hertzmann litwinowicz pencil watercolor">
         <label>Min stroke length <span class="tip" tabindex="0" data-tip="Strokes always reach this length before they are allowed to stop. Higher = more uniform, elongated strokes.">i</span> <span class="val" id="min-stroke-len-val">4</span></label>
         <input type="range" id="min-stroke-len" min="1" max="32" value="4" step="1" />
       </div>
@@ -189,17 +201,17 @@
         <input type="range" id="threshold" min="1" max="200" value="50" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil shiraishi watercolor">
         <label>Grid factor <span class="tip" tabindex="0" data-tip="Spacing between stroke seed points relative to brush size. Lower = denser strokes and fuller coverage; higher = sparser, faster.">i</span> <span class="val" id="grid-factor-val">1.0</span></label>
         <input type="range" id="grid-factor" min="0.25" max="3" value="1.0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi stipple watercolor">
         <label>Opacity <span class="tip" tabindex="0" data-tip="Paint transparency per stroke. 1 = solid paint; lower values let layers below show through, like a wash.">i</span> <span class="val" id="opacity-val">0.9</span></label>
         <input type="range" id="opacity" min="0.1" max="1" value="0.9" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi watercolor">
         <label>Saturation jitter <span class="tip" tabindex="0" data-tip="Random per-stroke variation in color intensity. A little (0.05–0.1) adds lively, hand-mixed color; 0 = exact source colors.">i</span> <span class="val" id="sat-jitter-val">0</span></label>
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
@@ -209,7 +221,7 @@
         <input type="range" id="size-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi watercolor">
         <label>Brush texture <span class="tip" tabindex="0" data-tip="Bristle texture inside each stroke: paint streaks, dry breaks, and tapered ends. 0 = flat solid strokes (fastest); higher = more visible bristles.">i</span> <span class="val" id="brush-texture-val">0</span></label>
         <input type="range" id="brush-texture" min="0" max="1" value="0" step="0.05" />
       </div>
@@ -219,7 +231,38 @@
         <input type="range" id="neural-levels" min="2" max="6" value="4" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli">
+      <div class="field" data-algos="stipple">
+        <label>Stipple points <span class="tip" tabindex="0" data-tip="Number of stipple dots. More dots = darker, finer-grained reproduction; fewer = sparse, abstract.">i</span> <span class="val" id="stipple-points-val">8000</span></label>
+        <input type="range" id="stipple-points" min="500" max="40000" value="8000" step="500" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Relaxation <span class="tip" tabindex="0" data-tip="Lloyd relaxation iterations. More spreads dots into an even, hand-stippled distribution; 0 leaves the raw random sampling.">i</span> <span class="val" id="stipple-iters-val">12</span></label>
+        <input type="range" id="stipple-iters" min="0" max="40" value="12" step="1" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Dot size min <span class="tip" tabindex="0" data-tip="Dot radius in the lightest areas.">i</span> <span class="val" id="stipple-dot-min-val">1</span></label>
+        <input type="range" id="stipple-dot-min" min="0.5" max="4" value="1" step="0.25" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Dot size max <span class="tip" tabindex="0" data-tip="Dot radius in the darkest areas.">i</span> <span class="val" id="stipple-dot-max-val">3</span></label>
+        <input type="range" id="stipple-dot-max" min="1" max="8" value="3" step="0.25" />
+      </div>
+
+      <label class="checkbox-row" data-algos="stipple">
+        <input type="checkbox" id="stipple-invert" />
+        Invert density
+        <span class="tip" tabindex="0" data-tip="Place dots in light areas instead of dark ones (white-on-black look when combined with a dark canvas).">i</span>
+      </label>
+
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi stipple watercolor">
+        <label>Seed <span class="tip" tabindex="0" data-tip="Random-number seed. The same seed with the same settings reproduces the exact same painting; change it to get a different arrangement of strokes.">i</span></label>
+        <input type="number" id="seed" value="0" step="1" />
+      </div>
+
+      <div class="field" data-algos="hertzmann litwinowicz haeberli shiraishi watercolor">
         <label>Underpainting <span class="tip" tabindex="0" data-tip="What the canvas starts as before strokes: a blurred copy (fills gaps invisibly), the image's average color, or plain white (gaps show as white).">i</span></label>
         <select id="underpaint-mode">
           <option value="blur">Blurred image</option>
@@ -228,7 +271,17 @@
         </select>
       </div>
 
-      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi stipple watercolor">
+        <label>Paper texture <span class="tip" tabindex="0" data-tip="Composites a bundled sheet of watercolor paper under the finished painting, so the grain shows through the paint. Most visible under translucent styles like Watercolor and Colored Pencil. Included in image, video and batch exports.">i</span></label>
+        <select id="paper-texture">
+          <option value="0">Off</option>
+          <option value="0.35">Subtle</option>
+          <option value="0.7">Medium</option>
+          <option value="1">Strong</option>
+        </select>
+      </div>
+
+      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi stipple watercolor">
         <input type="checkbox" id="fast-preview" />
         Fast preview
         <span class="tip" tabindex="0" data-tip="Renders at reduced size (400px) then upscales. Much faster for tuning settings; turn off for the final full-quality render.">i</span>
@@ -240,7 +293,7 @@
       <h2>Experimental</h2>
 
       <div id="experimental-fields">
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi watercolor">
           <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; Off = none.">i</span></label>
           <select id="hue-jitter">
             <option value="0">Off</option>
@@ -250,7 +303,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi watercolor">
           <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; Off = none.">i</span></label>
           <select id="val-jitter">
             <option value="0">Off</option>
@@ -260,7 +313,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural shiraishi watercolor">
           <label>Palette size <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. Off = full color; fewer colors give a poster or gouache look.">i</span></label>
           <select id="palette-size">
             <option value="0">Off (full color)</option>
@@ -290,7 +343,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz">
+        <div class="field" data-algos="hertzmann litwinowicz watercolor">
           <label>Dry-brush falloff <span class="tip" tabindex="0" data-tip="Fades each stroke toward its tail like a brush running out of paint. Higher = shorter-looking, scratchier strokes.">i</span></label>
           <select id="dry-brush">
             <option value="0">Off</option>
@@ -300,7 +353,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil watercolor">
           <label>Direction smoothing <span class="tip" tabindex="0" data-tip="Smooths the stroke-direction field so nearby strokes flow together. Higher = calmer, more coherent flow; Off = raw per-pixel directions.">i</span></label>
           <select id="tensor-sigma">
             <option value="0">Off</option>
@@ -310,7 +363,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
           <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light is above Off.">i</span></label>
           <select id="impasto-strength">
             <option value="0">Off</option>
@@ -320,7 +373,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
           <label>Impasto light <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; Off = flat.">i</span></label>
           <select id="impasto-light">
             <option value="0">Off</option>
@@ -330,7 +383,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
           <label>Light angle <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from. Only affects the painting when Impasto light is above Off.">i</span></label>
           <select id="light-angle">
             <option value="135">Top-left</option>
@@ -344,7 +397,82 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="litwinowicz">
+          <label>Orientation fill <span class="tip" tabindex="0" data-tip="In flat areas with no clear edges, interpolate stroke direction from nearby edges (as in the Litwinowicz paper) instead of using a constant 45°. Gives smoothly flowing strokes across skies and flat surfaces.">i</span></label>
+          <select id="orientation-fill">
+            <option value="0">Off (constant 45°)</option>
+            <option value="1">Interpolated</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="watercolor">
+          <label>Edge darkening <span class="tip" tabindex="0" data-tip="Pigment settling at the rim of each wash, the signature watercolor outline (Bousseau '06). Higher = crisper, darker wash boundaries; Off = flat washes.">i</span></label>
+          <select id="watercolor-edge">
+            <option value="0">Off</option>
+            <option value="0.35">Subtle</option>
+            <option value="0.7">Medium</option>
+            <option value="1.1">Strong</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="watercolor">
+          <label>Turbulence <span class="tip" tabindex="0" data-tip="Granulation: pigment density varying across the wash, from broad blooms down to grain settled in the paper's tooth. Higher = more mottled and blotchy.">i</span></label>
+          <select id="watercolor-turbulence">
+            <option value="0">Off</option>
+            <option value="0.25">Subtle</option>
+            <option value="0.5">Medium</option>
+            <option value="0.85">Strong</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="watercolor">
+          <label>Wobble <span class="tip" tabindex="0" data-tip="Meanders region boundaries through a low-frequency noise field so shapes look hand-laid rather than traced from the photo. Measured in pixels of displacement.">i</span></label>
+          <select id="watercolor-wobble">
+            <option value="0">Off</option>
+            <option value="1.5">Subtle</option>
+            <option value="3">Medium</option>
+            <option value="5">Strong</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="haeberli">
+          <label>Dab sizing <span class="tip" tabindex="0" data-tip="Fixed = every dab in a layer is the same size. By edge strength = dabs shrink near strong edges so detail survives (paper's size-by-local-detail).">i</span></label>
+          <select id="haeberli-size">
+            <option value="0">Fixed</option>
+            <option value="1">By edge strength</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
+          <label>Impasto profile <span class="tip" tabindex="0" data-tip="Shape of each stroke's virtual paint relief. Flat = classic coverage buildup; Rounded = ridge along the stroke spine; Rounded + bristle adds grooves from the brush texture. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="impasto-profile">
+            <option value="flat">Flat (classic)</option>
+            <option value="round">Rounded</option>
+            <option value="bristle">Rounded + bristle</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
+          <label>Light elevation <span class="tip" tabindex="0" data-tip="Height of the impasto light above the canvas. Low raking light exaggerates relief; overhead flattens it. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="light-elevation">
+            <option value="0.5">Default</option>
+            <option value="0.25">Low (raking)</option>
+            <option value="1">High</option>
+            <option value="2">Overhead</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli neural shiraishi watercolor">
+          <label>Gloss <span class="tip" tabindex="0" data-tip="Specular shine on the paint ridges, like wet oil paint catching the light. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="specular">
+            <option value="0">Off</option>
+            <option value="0.15">Subtle</option>
+            <option value="0.3">Medium</option>
+            <option value="0.6">Glossy</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil shiraishi watercolor">
           <label>Bristle density <span class="tip" tabindex="0" data-tip="How many bristle gaps each brush has. Coarse = a few wide streaks; Very fine = many fine streaks. Only visible when Brush texture is above 0.">i</span></label>
           <select id="bristle-density">
             <option value="6">Coarse</option>
@@ -354,7 +482,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil shiraishi watercolor">
           <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. Blunt = square ends; Sharp = pointed tips. Only visible when Brush texture is above 0.">i</span></label>
           <select id="texture-taper">
             <option value="0">Blunt</option>

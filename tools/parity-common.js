@@ -1,0 +1,191 @@
+'use strict';
+
+// Shared between tools/parity.html (browser) and tools/parity-node.js (CLI).
+// Defines the deterministic test image, the config matrix, the hash, and the
+// committed baseline hashes. Names are PARITY_-prefixed so this file can be
+// evaluated alongside worker.js without collisions.
+
+const PARITY_W = 320;
+const PARITY_H = 240;
+
+function parityRng(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Procedural test image: color gradient + bilinear value noise + disks.
+// Fully deterministic — no binary fixture needed.
+function makeParityImage(w = PARITY_W, h = PARITY_H) {
+  const rng = parityRng(1234567);
+  const gw = 9, gh = 7;
+  const grid = new Float32Array(gw * gh);
+  for (let i = 0; i < grid.length; i++) grid[i] = rng();
+
+  const disks = [];
+  for (let i = 0; i < 5; i++) {
+    disks.push({
+      x: rng() * w, y: rng() * h, r: 15 + rng() * 40,
+      cr: rng() * 255, cg: rng() * 255, cb: rng() * 255,
+    });
+  }
+
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // Bilinear noise sample
+      const u = (x / w) * (gw - 1), v = (y / h) * (gh - 1);
+      const x0 = Math.floor(u), y0 = Math.floor(v);
+      const fx = u - x0, fy = v - y0;
+      const g00 = grid[y0 * gw + x0], g10 = grid[y0 * gw + Math.min(gw - 1, x0 + 1)];
+      const g01 = grid[Math.min(gh - 1, y0 + 1) * gw + x0];
+      const g11 = grid[Math.min(gh - 1, y0 + 1) * gw + Math.min(gw - 1, x0 + 1)];
+      const n = (g00 * (1 - fx) + g10 * fx) * (1 - fy) + (g01 * (1 - fx) + g11 * fx) * fy;
+
+      let r = 40 + (x / w) * 180 + n * 60;
+      let g = 60 + (y / h) * 140 + n * 40;
+      let b = 200 - (x / w) * 120 + n * 50;
+
+      for (const d of disks) {
+        const dx = x - d.x, dy = y - d.y;
+        if (dx * dx + dy * dy < d.r * d.r) { r = d.cr; g = d.cg; b = d.cb; }
+      }
+
+      const i4 = (y * w + x) * 4;
+      data[i4] = r; data[i4 + 1] = g; data[i4 + 2] = b; data[i4 + 3] = 255;
+    }
+  }
+  return { data, width: w, height: h };
+}
+
+// Stand-in paper texture for the paper-composite configs. The shipped
+// assets/paper.png can't be decoded here (no PNG decoder in the Node runner),
+// and the pass only cares that the buffer is RGBA and deterministic.
+function makeParityPaper(pw = 64, ph = 64) {
+  const rng = parityRng(20260825);
+  const data = new Uint8ClampedArray(pw * ph * 4);
+  for (let y = 0; y < ph; y++) {
+    for (let x = 0; x < pw; x++) {
+      const grain = 220 + rng() * 35;
+      const fiber = Math.sin(x * 0.7) * 4 + Math.cos(y * 0.4) * 4;
+      const i = (y * pw + x) * 4;
+      data[i] = grain + fiber;
+      data[i + 1] = grain + fiber - 3;
+      data[i + 2] = grain + fiber - 10;
+      data[i + 3] = 255;
+    }
+  }
+  return { data, width: pw, height: ph };
+}
+
+const PARITY_PAPER = makeParityPaper();
+
+// Params fragment turning the paper composite on at a given strength.
+function parityPaperParams(strength) {
+  return {
+    paperTexture: strength,
+    paperData: PARITY_PAPER.data,
+    paperWidth: PARITY_PAPER.width,
+    paperHeight: PARITY_PAPER.height,
+  };
+}
+
+// FNV-1a 32-bit over the output RGBA buffer.
+function parityHash(u8) {
+  let hsh = 0x811c9dc5;
+  for (let i = 0; i < u8.length; i++) {
+    hsh ^= u8[i];
+    hsh = Math.imul(hsh, 0x01000193);
+  }
+  return ('00000000' + (hsh >>> 0).toString(16)).slice(-8);
+}
+
+// Baseline params: every field worker.js reads, all extras neutral.
+function parityBaseParams(overrides) {
+  return Object.assign({
+    algorithm: 'hertzmann',
+    brushRadii: [8, 4, 2],
+    threshold: 50,
+    maxStrokeLength: 16, minStrokeLength: 4,
+    curvature: 1.0, opacity: 0.9, gridFactor: 1.0,
+    satJitter: 0, sizeJitter: 0, brushTexture: 0,
+    paletteSize: 0, bristleDensity: 0, textureTaper: 0,
+    salienceOn: false, salienceStrength: 0, salienceCenter: 0, salienceDebug: false,
+    neuralLevels: 4,
+    dryBrushAmount: 0, tensorSigma: 0,
+    hueJitter: 0, valJitter: 0, angleJitter: 0, opacityJitter: 0,
+    impastoStrength: 0, impastoLightStrength: 0, lightAngle: 45,
+    impastoProfile: 'flat', lightElevation: 0.5, specularStrength: 0,
+    frameDiffThreshold: 0,
+    maskData: null, maskWidth: 0, maskHeight: 0,
+    fastPreview: false, underpaintMode: 'blur',
+    orientationFill: false, haeberliSizeByGradient: false,
+    stipplePoints: 8000, stippleIters: 12, stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+    watercolorEdge: 0, watercolorTurbulence: 0, watercolorWobble: 0,
+    paperTexture: 0, paperData: null, paperWidth: 0, paperHeight: 0,
+    seed: 1,
+  }, overrides);
+}
+
+const PARITY_CONFIGS = [
+  { name: 'hertzmann-plain',    params: parityBaseParams({}) },
+  { name: 'hertzmann-texture',  params: parityBaseParams({ brushTexture: 0.5 }) },
+  { name: 'hertzmann-jitters',  params: parityBaseParams({ sizeJitter: 0.3, opacityJitter: 0.3, angleJitter: 10, hueJitter: 0.05, satJitter: 0.2, valJitter: 0.2 }) },
+  { name: 'hertzmann-drybrush', params: parityBaseParams({ dryBrushAmount: 0.5 }) },
+  { name: 'hertzmann-impasto',  params: parityBaseParams({ impastoStrength: 0.6, impastoLightStrength: 0.6 }) },
+  { name: 'hertzmann-imp-round',params: parityBaseParams({ impastoStrength: 0.6, impastoLightStrength: 0.6, impastoProfile: 'round', lightElevation: 0.25, specularStrength: 0.3 }) },
+  { name: 'hertzmann-imp-brist',params: parityBaseParams({ impastoStrength: 0.6, impastoLightStrength: 0.6, impastoProfile: 'bristle', brushTexture: 0.5, specularStrength: 0.3 }) },
+  { name: 'hertzmann-palette',  params: parityBaseParams({ paletteSize: 8 }) },
+  { name: 'hertzmann-tensor',   params: parityBaseParams({ tensorSigma: 2 }) },
+  { name: 'litwinowicz-plain',  params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3] }) },
+  { name: 'litwinowicz-texture',params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3], brushTexture: 0.5, tensorSigma: 2 }) },
+  { name: 'litwinowicz-orient', params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3], orientationFill: true }) },
+  { name: 'haeberli-plain',     params: parityBaseParams({ algorithm: 'haeberli', brushRadii: [16, 8, 4], maxStrokeLength: 6, underpaintMode: 'average' }) },
+  { name: 'haeberli-sizegrad',  params: parityBaseParams({ algorithm: 'haeberli', brushRadii: [16, 8, 4], maxStrokeLength: 6, underpaintMode: 'average', haeberliSizeByGradient: true }) },
+  { name: 'pencil-plain',       params: parityBaseParams({ algorithm: 'pencil', brushRadii: [2, 1], underpaintMode: 'none' }) },
+  { name: 'shiraishi-plain',    params: parityBaseParams({ algorithm: 'shiraishi', brushRadii: [14, 7, 3], underpaintMode: 'average' }) },
+  { name: 'shiraishi-texture',  params: parityBaseParams({ algorithm: 'shiraishi', brushRadii: [14, 7, 3], underpaintMode: 'average', brushTexture: 0.5, satJitter: 0.1, impastoStrength: 0.3, impastoLightStrength: 0.3, impastoProfile: 'round' }) },
+  { name: 'stipple-plain',      params: parityBaseParams({ algorithm: 'stipple', opacity: 1 }) },
+  { name: 'stipple-noiters',    params: parityBaseParams({ algorithm: 'stipple', opacity: 1, stippleIters: 0, stipplePoints: 4000, stippleInvert: true }) },
+  // Watercolor: abstraction branch + the full Bousseau effect pass.
+  { name: 'watercolor-plain',   params: parityBaseParams({ algorithm: 'watercolor', brushRadii: [12, 6, 3], maxStrokeLength: 20, minStrokeLength: 6, opacity: 0.8, watercolorEdge: 0.6, watercolorTurbulence: 0.5, watercolorWobble: 2 }) },
+  // Watercolor: white-paper branch + palette abstraction + paper composite.
+  { name: 'watercolor-paper',   params: parityBaseParams(Object.assign({ algorithm: 'watercolor', brushRadii: [12, 6, 3], maxStrokeLength: 20, minStrokeLength: 6, opacity: 0.8, underpaintMode: 'none', paletteSize: 8, watercolorEdge: 0.4, watercolorTurbulence: 0.6, watercolorWobble: 0 }, parityPaperParams(0.6))) },
+  // Paper composite is global: proves it is deterministic on another algorithm.
+  { name: 'hertzmann-paper',    params: parityBaseParams(parityPaperParams(0.6)) },
+];
+
+// Committed reference hashes (seed 1). Regenerate with tools/parity-node.js
+// and paste the output here whenever an intentional output change lands.
+const PARITY_BASELINE = {
+  'hertzmann-plain': '70d0810a',
+  'hertzmann-texture': '86f30cde',
+  'hertzmann-jitters': '75b91b65',
+  'hertzmann-drybrush': '93312c8e',
+  'hertzmann-impasto': '914effc5',
+  'hertzmann-imp-round': 'c64cf417',
+  'hertzmann-imp-brist': '5b6656a8',
+  'hertzmann-palette': '7daf04ec',
+  'hertzmann-tensor': '78ef3250',
+  'litwinowicz-plain': 'b061f358',
+  'litwinowicz-texture': 'cff8b905',
+  'litwinowicz-orient': 'e2ffc783',
+  'haeberli-plain': '5e582260',
+  'haeberli-sizegrad': '35bcddbb',
+  'pencil-plain': '9e1ae1b2',
+  'shiraishi-plain': '8dc20ce7',
+  'shiraishi-texture': 'bed5d8aa',
+  'stipple-plain': 'dd49540b',
+  'stipple-noiters': '6e186c5f',
+  'watercolor-plain': '683cd461',
+  'watercolor-paper': '0b610463',
+  'hertzmann-paper': '1d75f99f',
+};
+
+// Allow require() from parity-node.js without breaking the browser.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { PARITY_W, PARITY_H, makeParityImage, makeParityPaper, parityPaperParams, parityHash, parityBaseParams, PARITY_CONFIGS, PARITY_BASELINE };
+}
