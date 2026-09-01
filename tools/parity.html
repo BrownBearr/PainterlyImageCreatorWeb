@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Parity harness — Painterly Image Creator</title>
+<style>
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 24px; background: #16161a; color: #e8e8ec; }
+  h1 { font-size: 18px; }
+  table { border-collapse: collapse; margin-top: 16px; }
+  th, td { border: 1px solid #333; padding: 4px 10px; font-family: ui-monospace, monospace; font-size: 13px; }
+  th { background: #222; text-align: left; }
+  .ok { color: #6fdf8f; }
+  .fail { color: #ff7b7b; font-weight: 600; }
+  .na { color: #888; }
+  button { padding: 6px 14px; margin-right: 8px; }
+  #preview { image-rendering: pixelated; border: 1px solid #333; margin-top: 12px; }
+  textarea { width: 100%; height: 160px; margin-top: 12px; background: #111; color: #cfc; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Determinism / parity harness</h1>
+<p>Each config renders 3× (seed 1, seed 1, seed 2). det = both seed-1 hashes equal; seed = seed-2 differs; baseline = seed-1 hash vs committed <code>PARITY_BASELINE</code>. Serve the repo root (<code>npx serve .</code>) and open <code>/tools/parity.html</code>. CLI equivalent: <code>node tools/parity-node.js</code>.</p>
+<button id="run">Run all</button>
+<button id="copy-baseline" disabled>Show baseline JS</button>
+<span id="status"></span>
+<table id="results" hidden>
+  <thead><tr><th>config</th><th>hash (seed 1)</th><th>det</th><th>seed</th><th>baseline</th><th>ms</th></tr></thead>
+  <tbody></tbody>
+</table>
+<canvas id="preview" width="320" height="240"></canvas>
+<textarea id="baseline-out" hidden readonly></textarea>
+
+<script src="parity-common.js"></script>
+<script>
+'use strict';
+
+const statusEl = document.getElementById('status');
+const tbody = document.querySelector('#results tbody');
+const previewCtx = document.getElementById('preview').getContext('2d');
+const baselineOut = document.getElementById('baseline-out');
+const copyBtn = document.getElementById('copy-baseline');
+let lastBaseline = null;
+
+function renderOnce(img, params) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker('../worker.js');
+    w.onmessage = (e) => {
+      if (e.data.type === 'done') { w.terminate(); resolve(e.data.result); }
+      else if (e.data.type === 'error') { w.terminate(); reject(new Error(e.data.message)); }
+    };
+    w.onerror = (err) => { w.terminate(); reject(new Error(err.message)); };
+    w.postMessage({
+      type: 'render',
+      imageData: { data: new Uint8ClampedArray(img.data), width: img.width, height: img.height },
+      params,
+    });
+  });
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  tbody.innerHTML = '';
+  document.getElementById('results').hidden = false;
+  const img = makeParityImage();
+  previewCtx.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+
+  const baseline = {};
+  let failures = 0;
+
+  for (const cfg of PARITY_CONFIGS) {
+    statusEl.textContent = `Running ${cfg.name}…`;
+    const t0 = performance.now();
+    const r1a = await renderOnce(img, { ...cfg.params, seed: 1 });
+    const r1b = await renderOnce(img, { ...cfg.params, seed: 1 });
+    const r2 = await renderOnce(img, { ...cfg.params, seed: 2 });
+    const ms = Math.round(performance.now() - t0);
+
+    previewCtx.putImageData(new ImageData(new Uint8ClampedArray(r1a.data), r1a.width, r1a.height), 0, 0);
+
+    const h1a = parityHash(r1a.data), h1b = parityHash(r1b.data), h2 = parityHash(r2.data);
+    const det = h1a === h1b;
+    const seedFx = h1a !== h2;
+    const ref = PARITY_BASELINE[cfg.name];
+    const baseOk = ref === undefined ? null : ref === h1a;
+    if (!det || !seedFx || baseOk === false) failures++;
+    baseline[cfg.name] = h1a;
+
+    const row = document.createElement('tr');
+    row.innerHTML =
+      `<td>${cfg.name}</td><td>${h1a}</td>` +
+      `<td class="${det ? 'ok' : 'fail'}">${det ? 'ok' : 'FAIL'}</td>` +
+      `<td class="${seedFx ? 'ok' : 'fail'}">${seedFx ? 'ok' : 'FAIL'}</td>` +
+      (baseOk === null ? '<td class="na">n/a</td>'
+        : `<td class="${baseOk ? 'ok' : 'fail'}">${baseOk ? 'match' : 'DIFF ' + ref}</td>`) +
+      `<td>${ms}</td>`;
+    tbody.appendChild(row);
+  }
+
+  lastBaseline = baseline;
+  copyBtn.disabled = false;
+  statusEl.textContent = failures ? `${failures} config(s) FAILED` : 'All configs passed.';
+});
+
+copyBtn.addEventListener('click', () => {
+  const lines = Object.entries(lastBaseline).map(([k, v]) => `  '${k}': '${v}',`);
+  baselineOut.value = 'const PARITY_BASELINE = {\n' + lines.join('\n') + '\n};';
+  baselineOut.hidden = false;
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Painterly Image Creator Web
 
-Browser-based stroke-painting renderer implementing five stroke-based NPR algorithms (Hertzmann 1998 curved strokes, Litwinowicz 1997 impressionist strokes, Haeberli 1990 paint-by-numbers, a colored pencil hatching style, and the neural Paint Transformer, ICCV 2021). Runs entirely client-side — no server, no build step.
+Browser-based stroke-painting renderer implementing seven stroke-based NPR algorithms (Hertzmann 1998 curved strokes, Litwinowicz 1997 impressionist strokes, Haeberli 1990 paint-by-numbers, Shiraishi–Yamaguchi 2000 moment-fitted strokes, Secord 2002 weighted Voronoi stippling, a colored pencil hatching style, and the neural Paint Transformer, ICCV 2021). Runs entirely client-side — no server, no build step.
 
 ## Architecture
 
@@ -13,11 +13,13 @@ Plain JavaScript at the repo root:
 | `main.js` | UI state, event wiring, preset management, worker orchestration |
 | `worker.js` | Off-thread painting algorithms (Web Worker) |
 | `brush-texture.js` | Procedural bristle texture tiles (loaded by worker.js via `importScripts`) |
+| `styles/shiraishi.js` | Shiraishi–Yamaguchi 2000 algorithm (loaded by worker.js via `importScripts`) |
+| `styles/stipple.js` | Secord 2002 weighted Voronoi stippling (loaded by worker.js via `importScripts`) |
 | `neural.js` | Paint Transformer pipeline (lazy-loaded by worker.js only for the neural algorithm) |
 | `vendor/ort/ort.min.js` | onnxruntime-web UMD bundle (lazy-loaded with neural.js; see `vendor/ort/VERSION.md`) |
 | `video-batch.js` | `PainterWorker` wrapper class, `ZipWriter`, video/batch processors |
 | `webm-muxer.js` | Third-party WebM muxer (bundled, do not edit) |
-| `tools/` | Offline Python tooling: ONNX conversion + CDN upload (not served) |
+| `tools/` | Offline Python tooling (ONNX conversion + CDN upload) and the determinism/parity harness (`parity.html`, `parity-common.js`, `parity-node.js`) — not served |
 
 The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main.js` spawns the worker, posts `render` messages, and receives `progress`/`status`/`done`/`error` responses. `video-batch.js` wraps the worker in a `PainterWorker` class and handles multi-frame pipelines.
 
@@ -28,8 +30,10 @@ The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main
 | Key | Function | Approach |
 |---|---|---|
 | `hertzmann` | `paintHertzmann` | Layered coarse→fine curved strokes; Lab error map decides where to repaint; strokes follow gradient perpendiculars (`makeCurvedStroke`). Only algorithm that supports temporal coherence (`prevState`) and the detail mask. |
-| `litwinowicz` | `paintLitwinowicz` | Jittered grid of short oriented strokes (⊥ smoothed gradient via structure tensor), clipped where Sobel edge magnitude exceeds 0.35·max. |
-| `haeberli` | `paintHaeberli` | Random seeded daubs, one pass per radius coarse→fine; round dab or gradient-oriented daub. |
+| `litwinowicz` | `paintLitwinowicz` | Jittered grid of short oriented strokes (⊥ smoothed gradient via structure tensor), clipped where Sobel edge magnitude exceeds 0.35·max. Optional `orientationFill` interpolates stroke angles across weak-gradient areas via a push-pull pyramid on the doubled-angle field (default off = legacy constant 45° fallback; deviation: push-pull instead of the paper's thin-plate interpolation). |
+| `haeberli` | `paintHaeberli` | Random seeded daubs, one pass per radius coarse→fine; round dab or gradient-oriented daub. Optional `haeberliSizeByGradient` shrinks dabs near strong edges (paper's size-by-local-detail). |
+| `shiraishi` | `paintShiraishi` (styles/shiraishi.js) | Shiraishi–Yamaguchi 2000: per layer, stroke seeds by Floyd–Steinberg dithering of an importance image (uniform, then canvas-vs-source Lab error), each stroke fitted from second-order moments of a local color-similarity image (equivalent-rectangle center/angle/length/width). Deviations: capsules instead of sharp rectangles; colors from the layer-blurred source. |
+| `stipple` | `paintStipple` (styles/stipple.js) | Secord 2002 weighted Voronoi stippling: luminance-derived density on a ≤512px grid, seeded rejection-sampled sites, Lloyd relaxation with jump-flooding nearest-site assignment (ties → lower id, deterministic), dots emitted via the sink's `dot` fast path. Always starts from white; ignores `underpaintMode`. |
 | `pencil` | `paintPencil` | White paper, luminance-gated colored hatch strokes (+cross-hatch in shadows), edge-emphasis pass, deterministic paper-grain multiply. Ignores `underpaintMode`. |
 | `neural` | `paintNeural` (neural.js) | Paint Transformer: coarse→fine patch pyramid, batched ONNX inference (WebGPU→wasm fallback), strokes decoded to oriented capsules and rasterized through `renderStrokeSolid` at full resolution. Async — `paintify` awaits it. Registered lazily by `ensureNeural()` so classic modes never load onnxruntime. Model + ORT wasm live on the CDN (see `vendor/ort/VERSION.md`), cached via the browser Cache API. |
 
@@ -37,9 +41,15 @@ Shared helpers: `applyUnderpaint(env)`, `applyImpastoLighting(env)`, `finalizeSt
 
 Brush textures (`brush-texture.js`): `makeBrushTextures` builds seeded per-radius tile sets once per job (only when `params.brushTexture > 0`); `getStrokeTexture` hashes the stroke seed position for a deterministic variant. Strength 0 must remain byte-identical to the untextured path — regression-tested against committed output.
 
-RNG: Hertzmann uses `Math.random()`; the others use seeded `mulberry32` (video frame stability); neural is deterministic given the canvas.
+RNG & determinism: every algorithm is seeded — same `params.seed` + same params ⇒ byte-identical output. Each algorithm creates one `mulberry32(CONSTANT ^ (params.seed | 0))` per render and threads it through every random draw (including `finalizeStrokeColor`'s jitters — never let it fall back to its `Math.random` default). Seeds are stable **within** a version only: adding or reordering any RNG draw silently changes fixed-seed output — when that happens intentionally, regenerate the parity baselines (below). Fixed constants per algorithm: hertzmann `0x1E52A11`, litwinowicz `0xC0FFEE`, haeberli `0xBADA55`, pencil `0x9E3779B9`, shiraishi `0x51DA15`, stipple `0x577DD1E`, neural color jitter `0x7A1D7E`.
 
-The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap, onStatus, prevState }`.
+**Stroke sink**: generation and rasterization are decoupled. Style generators build a `StrokeRecord` — `{ pts, radius, color (final), opacity, layer, tex, dryBrush, height, dot?, styleData? }` (documented above `makeCanvasSink` in worker.js) — and call `env.sink.emit(record)`. The default canvas sink rasterizes immediately through `renderStrokeSolid` (generators must emit in paint order: stroke growth and error maps read the live canvas), with a `dot: true` allocation-free disc fast path for stippling. New styles must route all drawing through the sink, never call `renderStrokeSolid` directly.
+
+**Impasto** (Hertzmann 2002): `params.impastoProfile` selects the height model — `'flat'` (legacy: heightBuf accumulates stroke coverage), `'round'` (per-stroke height dome composited like paint: ridge along the spine, falloff to edges), `'bristle'` (dome × brush-tile grooves, needs brushTexture > 0 to differ from round). `applyImpastoLighting` takes `lightAngle`, `lightElevation` (0.5 = legacy default), and `specularStrength` (Blinn-Phong sheen; flat-surface specular is subtracted so flat regions stay untouched, matching the diffuse neutral-flat convention).
+
+The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap, onStatus, prevState, sink }`.
+
+**Parity harness** (`tools/`): `node tools/parity-node.js` renders every algorithm × feature config three times (seed 1×2, seed 2) and checks determinism, seed sensitivity, and the committed `PARITY_BASELINE` hashes in `tools/parity-common.js`; `tools/parity.html` is the in-browser equivalent (serve the repo root, open `/tools/parity.html`). Run it after any change to worker.js, brush-texture.js, or styles/; if an output change is intentional, regenerate with `node tools/parity-node.js --baseline` and paste the result into `parity-common.js`.
 
 Offline tooling: `tools/convert_paint_transformer.py` (PyTorch → ONNX fp16 with torch-vs-ORT parity self-check; needs `torch onnx onnxruntime onnxconverter-common`), `tools/upload_neural_assets.py` (uploads model + ORT wasm to B2 under `painterly/`; reads `B2_KEY_ID`/`B2_APP_KEY` env vars).
 
@@ -55,14 +65,15 @@ All modes share the same sidebar parameters.
 
 - Normal controls (sliders): brush radii, max/min stroke length, curvature, threshold T, grid factor, opacity, saturation jitter, size jitter, brush texture, underpainting, fast preview.
 - **Experimental controls** live in `#experimental-fields` (always visible — no toggle) as `<select>` dropdowns, each with a neutral default option (usually "Off"): hue/value/angle/opacity jitter, palette size, dry-brush, direction smoothing (tensor σ), impasto strength/light, light angle, bristle density, stroke taper, salience center bias. Option `value`s are the raw numeric params, so `getParams()` reads them with `parseFloat`/`parseInt` like any control — no gating. `setSlider()` snaps a preset's continuous value to the nearest option. When adding an experimental control, make it a `<select>` whose default option is neutral so a hidden control can't affect the result.
-- **Per-stroke non-uniformity** (Hertzmann only): `sizeJitter` (radius) and `opacityJitter` are applied per stroke in `paintHertzmann`; `angleJitter` (degrees) rotates each step inside `makeCurvedStroke`. All use `Math.random()` per the Hertzmann RNG convention.
+- **Per-stroke non-uniformity** (Hertzmann only): `sizeJitter` (radius) and `opacityJitter` are applied per stroke in `paintHertzmann`; `angleJitter` (degrees) rotates each step inside `makeCurvedStroke`. All draw from the per-render seeded RNG.
+- **Seed**: `#seed` number input (default 0) — same seed + same settings reproduces the same painting in every algorithm; it stays fixed across video/batch frames (frame-to-frame stability).
 - **Per-algorithm visibility**: elements carry `data-algos="hertzmann litwinowicz …"`; `updateControlVisibility()` in `main.js` shows/hides them on algorithm change and preset apply. When adding a control, give it a `data-algos` attribute and a `.tip` tooltip span.
 - **Tooltips**: `<span class="tip" tabindex="0" data-tip="…">i</span>` next to each label; a single fixed-position `#tooltip` element (created in `main.js`) is positioned beside the hovered/focused icon — CSS-only tooltips would clip in the scrolling sidebar.
 - **Typography**: follows the Astryx design system font roles — Figtree for both body (`--font-ui`) and headings (`--font-display`, semibold 600 on the 14px × 1.2 geometric scale), Lilex (`--font-mono`) for numeric values.
 
 ## Presets
 
-Defined in `main.js` as the `PRESETS` object: `impressionist`, `expressionist`, `pointillist`, `wash` (Hertzmann), `litstrokes` (Litwinowicz), `daubs` (Haeberli), `pencilsketch` (pencil). Every preset carries an `algorithm` field; `applyPreset` merges over `PRESET_DEFAULTS` so omitted fields reset rather than leak from the previous preset. When adding a preset, add it to `PRESETS` and a matching `<option>` inside the right `<optgroup>` in `index.html`.
+Defined in `main.js` as the `PRESETS` object: `impressionist`, `expressionist`, `pointillist`, `wash` (Hertzmann), `litstrokes` (Litwinowicz, opts into `orientationFill`), `daubs` (Haeberli), `patchwork` (Shiraishi), `stippled` (stipple), `pencilsketch` (pencil). Every preset carries an `algorithm` field; `applyPreset` merges over `PRESET_DEFAULTS` so omitted fields reset rather than leak from the previous preset. When adding a preset, add it to `PRESETS` and a matching `<option>` inside the right `<optgroup>` in `index.html`.
 
 ## Development
 

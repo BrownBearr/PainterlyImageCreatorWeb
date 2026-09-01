@@ -54,6 +54,10 @@ const PRESET_DEFAULTS = {
   salienceOn: false, salienceStrength: 0.5,
   neuralLevels: 4,
   underpaintMode: 'blur', fastPreview: false,
+  seed: 0,
+  orientationFill: 0,
+  stipplePoints: 8000, stippleIters: 12,
+  stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
 };
 
 const PRESETS = {
@@ -105,6 +109,23 @@ const PRESETS = {
     hueJitter: 0.03, satJitter: 0.05, valJitter: 0.05,
     brushTexture: 0.5,
     underpaintMode: 'blur', fastPreview: false,
+    orientationFill: 1,
+  },
+  // ── Secord '02 — weighted Voronoi stippling ──
+  stippled: {
+    algorithm: 'stipple',
+    opacity: 1.0,
+    stipplePoints: 8000, stippleIters: 12,
+    stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+    fastPreview: false,
+  },
+  // ── Shiraishi–Yamaguchi '00 — moment-fitted rectangular strokes ──
+  patchwork: {
+    algorithm: 'shiraishi',
+    brushRadii: '14, 7, 3',
+    gridFactor: 1.0, opacity: 0.9,
+    satJitter: 0.08,
+    underpaintMode: 'average', fastPreview: false,
   },
   // ── Haeberli '90 — paint by numbers: random point-sampled daubs ──
   daubs: {
@@ -176,6 +197,13 @@ function applyPreset(key) {
   setSlider('neural-levels', p.neuralLevels);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
+  document.getElementById('seed').value = p.seed;
+  setSlider('orientation-fill', p.orientationFill);
+  setSlider('stipple-points', p.stipplePoints);
+  setSlider('stipple-iters', p.stippleIters);
+  setSlider('stipple-dot-min', p.stippleDotMin);
+  setSlider('stipple-dot-max', p.stippleDotMax);
+  document.getElementById('stipple-invert').checked = p.stippleInvert;
   _applyingPreset = false;
   updateControlVisibility();
 }
@@ -479,12 +507,23 @@ function getParams() {
     impastoStrength:      num('impasto-strength'),
     impastoLightStrength: num('impasto-light'),
     lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
+    impastoProfile:       document.getElementById('impasto-profile').value,
+    lightElevation:       parseFloat(document.getElementById('light-elevation').value) || 0.5,
+    specularStrength:     num('specular'),
+    orientationFill:      num('orientation-fill') > 0,
+    haeberliSizeByGradient: num('haeberli-size') > 0,
+    stipplePoints:        parseInt(document.getElementById('stipple-points').value, 10) || 8000,
+    stippleIters:         parseInt(document.getElementById('stipple-iters').value, 10) || 0,
+    stippleDotMin:        num('stipple-dot-min'),
+    stippleDotMax:        num('stipple-dot-max'),
+    stippleInvert:        document.getElementById('stipple-invert').checked,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
     maskWidth:  maskImageData ? maskImageData.width  : 0,
     maskHeight: maskImageData ? maskImageData.height : 0,
     fastPreview:          document.getElementById('fast-preview').checked,
     underpaintMode:  document.getElementById('underpaint-mode').value,
+    seed:            parseInt(document.getElementById('seed').value, 10) || 0,
   };
 }
 
@@ -654,7 +693,9 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['brush-texture','brush-texture-val'],
  ['salience-strength','salience-strength-val'],
  ['neural-levels','neural-levels-val'],
- ['frame-diff','frame-diff-val']]
+ ['frame-diff','frame-diff-val'],
+ ['stipple-points','stipple-points-val'], ['stipple-iters','stipple-iters-val'],
+ ['stipple-dot-min','stipple-dot-min-val'], ['stipple-dot-max','stipple-dot-max-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
     if (!inp || !lbl) return;
@@ -721,7 +762,9 @@ document.getElementById('algorithm-select').addEventListener('change', () => {
  'hue-jitter', 'sat-jitter', 'val-jitter', 'size-jitter', 'angle-jitter', 'opacity-jitter',
  'brush-texture', 'bristle-density', 'texture-taper',
  'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
- 'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
+ 'impasto-strength', 'impasto-light', 'light-angle', 'impasto-profile', 'light-elevation', 'specular',
+ 'orientation-fill', 'haeberli-size', 'underpaint-mode', 'fast-preview',
+ 'stipple-points', 'stipple-iters', 'stipple-dot-min', 'stipple-dot-max', 'stipple-invert']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
