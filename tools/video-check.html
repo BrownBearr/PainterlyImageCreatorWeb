@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Video export — frame order &amp; cadence check</title>
+<style>
+  body { font: 13px/1.6 ui-sans-serif, system-ui, sans-serif; margin: 24px; max-width: 900px; }
+  button { font: inherit; padding: 8px 18px; border: 1px solid #888; background: #fff; border-radius: 5px; cursor: pointer; }
+  pre { background: #fafafa; border: 1px solid #eee; padding: 10px; border-radius: 5px; white-space: pre-wrap; }
+  .ok { color: #0a7a3d; font-weight: 600; }
+  .bad { color: #c02626; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Video export — frame order &amp; cadence check</h1>
+<p>
+Builds a synthetic video whose frames are identifiable by colour, runs it through
+<code>VideoProcessor</code> with painting stubbed to identity, and inspects every frame handed to the
+encoder. Catches the two defects the export had: frames drawn at a different moment than their
+timestamp (misordering / duplication), and timestamps taken off the decoded media clock rather than
+the output fps grid (hitching).
+</p>
+<button id="run">Run check</button>
+<pre id="log"></pre>
+
+<script src="../webm-muxer.js"></script>
+<script src="../video-batch.js"></script>
+<script>
+'use strict';
+const logEl = document.getElementById('log');
+const log = (s) => { logEl.innerHTML += s + '\n'; };
+
+const FPS = 10;
+const NFRAMES = 24;
+
+// A video where frame i is a flat colour encoding i, so a decoded frame can be
+// identified from a single pixel.
+function frameColor(i) { return [10 + i * 9, 60, 200 - i * 6]; }
+
+async function makeTestVideo(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const stream = c.captureStream(0);
+  const track = stream.getVideoTracks()[0];
+  const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+  const parts = [];
+  rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data); };
+  rec.start();
+  for (let i = 0; i < NFRAMES; i++) {
+    const [r, g, b] = frameColor(i);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, 0, w, h);
+    track.requestFrame();
+    await new Promise(res => setTimeout(res, 1000 / FPS));
+  }
+  await new Promise(res => { rec.onstop = res; rec.stop(); });
+  return new File(parts, 'test.webm', { type: 'video/webm' });
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  document.getElementById('run').disabled = true;
+  logEl.textContent = '';
+
+  const W = 160, H = 120;
+  log(`building ${NFRAMES}-frame test video @ ${FPS} fps …`);
+  const file = await makeTestVideo(W, H);
+  log(`test video: ${(file.size / 1024).toFixed(1)} KB`);
+
+  // Painting is not under test — resolve with the input untouched so the colour
+  // that reaches the encoder is exactly the colour that was extracted.
+  const origRender = PainterWorker.prototype.render;
+  PainterWorker.prototype.render = function (imageData) {
+    return Promise.resolve({ data: imageData.data, width: imageData.width, height: imageData.height });
+  };
+
+  // Record what each encoded frame actually contained and when it claimed to be.
+  const seen = [];
+  const origEncode = VideoEncoder.prototype.encode;
+  VideoEncoder.prototype.encode = function (frame, opts) {
+    seen.push({ ts: frame.timestamp });
+    return origEncode.call(this, frame, opts);
+  };
+  // Capture the extracted pixels too, by wrapping the identity render.
+  PainterWorker.prototype.render = function (imageData) {
+    const d = imageData.data;
+    seen.push({ px: [d[0], d[1], d[2]] });
+    return Promise.resolve({ data: d, width: imageData.width, height: imageData.height });
+  };
+
+  const origDownload = window.triggerDownload;
+  let downloaded = false;
+  window.triggerDownload = () => { downloaded = true; };  // don't save a file during the check
+
+  const vp = new VideoProcessor({ onStatus: () => {}, onFrameProgress: () => {} });
+  try {
+    await vp.process(file, { algorithm: 'hertzmann', brushRadii: [4], fastPreview: false }, FPS);
+  } catch (e) {
+    log(`<span class="bad">process threw: ${e.message}</span>`);
+  }
+
+  PainterWorker.prototype.render = origRender;
+  VideoEncoder.prototype.encode = origEncode;
+  window.triggerDownload = origDownload;
+
+  const px = seen.filter(s => s.px).map(s => s.px);
+  const ts = seen.filter(s => s.ts !== undefined).map(s => s.ts);
+
+  log(`\nframes extracted: ${px.length}, frames encoded: ${ts.length}`);
+
+  // ── cadence ──
+  const deltas = [];
+  for (let i = 1; i < ts.length; i++) deltas.push(ts[i] - ts[i - 1]);
+  const want = Math.round(1_000_000 / FPS);
+  const bad = deltas.filter(d => Math.abs(d - want) > 1);
+  const mono = deltas.every(d => d > 0);
+  log(`timestamp step: expected ${want} µs, got ${deltas.length ? Math.min(...deltas) : '-'}–${deltas.length ? Math.max(...deltas) : '-'} µs`);
+  log(`strictly increasing: ${mono ? '<span class="ok">yes</span>' : '<span class="bad">NO</span>'}`);
+  log(`uniform cadence: ${bad.length === 0 ? '<span class="ok">yes</span>' : `<span class="bad">NO — ${bad.length} irregular steps</span>`}`);
+
+  // ── frame order ──
+  // Decoded colours should advance monotonically. Repeats are legitimate when
+  // resampling; going backwards is not.
+  const idxOf = (c) => Math.round((c[0] - 10) / 9);
+  const seq = px.map(idxOf);
+  let regressions = 0, repeats = 0;
+  for (let i = 1; i < seq.length; i++) {
+    if (seq[i] < seq[i - 1]) regressions++;
+    else if (seq[i] === seq[i - 1]) repeats++;
+  }
+  log(`\ndecoded frame sequence: ${seq.join(' ')}`);
+  log(`out-of-order frames: ${regressions === 0 ? '<span class="ok">0</span>' : `<span class="bad">${regressions}</span>`}`);
+  log(`repeated frames: ${repeats} (legitimate when resampling fps)`);
+
+  const pass = mono && bad.length === 0 && regressions === 0 && px.length > 0;
+  log(`\n${pass ? '<span class="ok">PASS</span>' : '<span class="bad">FAIL</span>'}`);
+  document.getElementById('run').disabled = false;
+});
+</script>
+</body>
+</html>

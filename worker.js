@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('brush-texture.js', 'styles/shiraishi.js', 'styles/stipple.js');
+importScripts('brush-texture.js', 'styles/stipple.js', 'styles/relaxation.js');
 
 // Seeded PRNG — used by the newer algorithms so stroke placement is
 // deterministic (important for frame-to-frame stability in video mode).
@@ -172,6 +172,93 @@ function computeGradients(rgbF32, w, h) {
 }
 
 // ─── Structure-tensor gradient smoothing ──────────────────────────────────────
+
+// ─── Edge Tangent Flow (Kang, Lee & Chui 2007) ───────────────────────────────
+// "Coherent Line Drawing" §3: iteratively smooth the tangent field while
+// preserving salient edge directions. Each pass replaces a tangent with a
+// weighted sum of its neighbours, where the weights are
+//
+//   w_m = (1 + tanh(eta * (g(y) - g(x)))) / 2   favour stronger gradients
+//   w_d = |t(x) . t(y)|                         favour aligned neighbours
+//   phi = sign(t(x) . t(y))                     fold antiparallel onto parallel
+//
+// The result is a far cleaner flow than the single-pass structure tensor: it
+// keeps strokes running *along* edges instead of smearing direction across
+// them, which is exactly what curved-stroke placement depends on.
+//
+// Deviation from the paper: the neighbourhood is applied separably (a
+// horizontal pass then a vertical one) per iteration rather than as a full
+// disc, which is the standard O(r) approximation — a full disc at useful radii
+// is too slow for a CPU render.
+//
+// Returns the same { gx, gy, gmag } shape as computeGradients: callers take the
+// perpendicular of (gx, gy) to get the stroke direction, so the tangent is
+// rotated back into a gradient here and gmag stays the raw Sobel magnitude
+// (stroke growth uses it as a "is there any structure here" test).
+function computeGradientsETF(rgbF32, w, h, radius, iterations) {
+  const { gx, gy, gmag } = computeGradients(rgbF32, w, h);
+  const n = w * h;
+
+  let maxG = 0;
+  for (let i = 0; i < n; i++) if (gmag[i] > maxG) maxG = gmag[i];
+  const gnorm = new Float32Array(n);
+  if (maxG > 1e-12) for (let i = 0; i < n; i++) gnorm[i] = gmag[i] / maxG;
+
+  // Initial tangent = gradient rotated +90 degrees, normalized.
+  let tx = new Float32Array(n), ty = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const vx = -gy[i], vy = gx[i];
+    const len = Math.hypot(vx, vy);
+    if (len > 1e-12) { tx[i] = vx / len; ty[i] = vy / len; }
+    else { tx[i] = 1; ty[i] = 0; }
+  }
+
+  const r = Math.max(1, Math.round(radius));
+  const ETA = 1.0;
+  let nx = new Float32Array(n), ny = new Float32Array(n);
+
+  const pass = (dx, dy) => {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const cx = tx[i], cy = ty[i], gc = gnorm[i];
+        let sx = 0, sy = 0;
+        for (let k = -r; k <= r; k++) {
+          const xx = x + dx * k, yy = y + dy * k;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const j = yy * w + xx;
+          const dot = cx * tx[j] + cy * ty[j];
+          const wm = (1 + Math.tanh(ETA * (gnorm[j] - gc))) * 0.5;
+          const wd = Math.abs(dot);
+          const phi = dot >= 0 ? 1 : -1;
+          const weight = phi * wm * wd;
+          sx += tx[j] * weight; sy += ty[j] * weight;
+        }
+        const len = Math.hypot(sx, sy);
+        if (len > 1e-12) { nx[i] = sx / len; ny[i] = sy / len; }
+        else { nx[i] = cx; ny[i] = cy; }
+      }
+    }
+    let t;
+    t = tx; tx = nx; nx = t;
+    t = ty; ty = ny; ny = t;
+  };
+
+  for (let it = 0; it < Math.max(1, iterations); it++) { pass(1, 0); pass(0, 1); }
+
+  // Rotate the refined tangent back into gradient space for the callers.
+  const ogx = new Float32Array(n), ogy = new Float32Array(n);
+  for (let i = 0; i < n; i++) { ogx[i] = ty[i]; ogy[i] = -tx[i]; }
+  return { gx: ogx, gy: ogy, gmag };
+}
+
+// Shared direction-field selector: ETF > structure tensor > raw Sobel.
+function strokeDirectionField(rgbF32, w, h, params) {
+  const { etfRadius = 0, etfIterations = 2, tensorSigma = 0 } = params;
+  if (etfRadius > 0) return computeGradientsETF(rgbF32, w, h, etfRadius, etfIterations);
+  if (tensorSigma > 0) return computeGradientsST(rgbF32, w, h, tensorSigma);
+  return computeGradients(rgbF32, w, h);
+}
 
 function computeGradientsST(rgbF32, w, h, sigma) {
   // Raw Sobel first
@@ -929,7 +1016,7 @@ function paintHertzmann(env) {
   // the GPU when the backend is active. The structure-tensor variant has no GPU
   // implementation, so tensorSigma > 0 stays on the CPU maps.
   const gpu = env.gpu || null;
-  const gpuMaps = (gpu && tensorSigma <= 0) ? {
+  const gpuMaps = (gpu && tensorSigma <= 0 && !(params.etfRadius > 0)) ? {
     refBlur: new Float32Array(w * h * 3),
     gx: new Float32Array(w * h), gy: new Float32Array(w * h), gmag: new Float32Array(w * h),
     err: new Float32Array(w * h),
@@ -946,9 +1033,7 @@ function paintHertzmann(env) {
     } else {
       refBlur = gaussianBlurRGB(srcRGB, w, h, sigma);
       const labRef = buildLabBuffer(refBlur, w, h);
-      ({ gx, gy, gmag } = tensorSigma > 0
-        ? computeGradientsST(refBlur, w, h, tensorSigma)
-        : computeGradients(refBlur, w, h));
+      ({ gx, gy, gmag } = strokeDirectionField(refBlur, w, h, params));
       const labCanvas = buildLabBuffer(canvasRGB, w, h);
       err = computeErrorMap(labRef, labCanvas, w, h);
     }
@@ -1100,7 +1185,9 @@ function paintLitwinowicz(env) {
 
   // Smoothed orientation field (the paper smooths/interpolates directions);
   // the Direction smoothing slider overrides the default σ when set.
-  const { gx, gy, gmag } = computeGradientsST(refBlur, w, h, tensorSigma > 0 ? tensorSigma : 2.0);
+  const { gx, gy, gmag } = params.etfRadius > 0
+    ? computeGradientsETF(refBlur, w, h, params.etfRadius, params.etfIterations ?? 2)
+    : computeGradientsST(refBlur, w, h, tensorSigma > 0 ? tensorSigma : 2.0);
 
   // Optional paper-style orientation interpolation across weak-gradient areas
   // (default off = legacy constant 45° fallback).
@@ -1185,194 +1272,12 @@ function paintLitwinowicz(env) {
   onProgress(1);
 }
 
-// ─── Algorithm: Haeberli 1990 — paint by numbers ──────────────────────────────
-// Random point-sampled dabs, one pass per brush radius coarse → fine, color
-// sampled from the source at each dab position.
-
-function paintHaeberli(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex, detailMap, sink } = env;
-  const { maxStrokeLength, gridFactor, opacity, impastoStrength = 0 } = params;
-  const rand = mulberry32(0xBADA55 ^ (params.seed | 0));
-
-  applyUnderpaint(env);
-
-  for (let ri = 0; ri < radii.length; ri++) {
-    const r = Math.max(1, Math.round(radii[ri]));
-    const refBlur = gaussianBlurRGB(srcRGB, w, h, Math.max(0.5, r * 0.4));
-    const { gx, gy, gmag } = computeGradients(refBlur, w, h);
-
-    // Optional Haeberli size-by-detail: shrink dabs where the gradient is
-    // strong so edges get finer daubs (paper's size-by-local-detail option).
-    let maxG = 0;
-    if (params.haeberliSizeByGradient) {
-      for (let i = 0; i < gmag.length; i++) if (gmag[i] > maxG) maxG = gmag[i];
-    }
-
-    // Enough dabs to statistically cover the image at this scale.
-    const cell = Math.max(1, r * gridFactor);
-    const nDabs = Math.ceil((w * h) / (cell * cell));
-
-    for (let i = 0; i < nDabs; i++) {
-      const x = Math.floor(rand() * w), y = Math.floor(rand() * h);
-      const idx = y * w + x;
-      const color = finalizeStrokeColor(
-        refBlur[idx * 3], refBlur[idx * 3 + 1], refBlur[idx * 3 + 2], params, palette, rand);
-
-      // Round dab by default (degenerate segment renders as a circle);
-      // elongated gradient-oriented daub when the stroke length allows it
-      // and the local gradient is meaningful.
-      let p0 = [x, y], p1 = [x, y];
-      if (maxStrokeLength > 2 && gmag[idx] > 1e-4) {
-        const len = Math.min(maxStrokeLength, r * 2);
-        const dx = -gy[idx] / gmag[idx], dy = gx[idx] / gmag[idx];
-        p0 = [x - dx * len / 2, y - dy * len / 2];
-        p1 = [x + dx * len / 2, y + dy * len / 2];
-      }
-      // Detail coupling: smaller dabs where the detail map is bright, plus a
-      // probabilistic extra dab so salient areas end up denser.
-      const rBase = maxG > 0 ? Math.max(1, Math.round(r / (1 + 2 * (gmag[idx] / maxG)))) : r;
-      const d = detailMap ? detailMap[idx] : 0;
-      const rDab = d > 0 ? Math.max(1, Math.round(rBase * (1 - 0.35 * d))) : rBase;
-      sink.emit({
-        pts: [p0, p1], radius: rDab, color, opacity, layer: ri,
-        tex: getStrokeTexture(brushTex, ri, x, y),
-        dryBrush: 0, height: impastoStrength,
-      });
-      if (d > 0 && rand() < 0.6 * d) {
-        const x2 = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * r * 2)));
-        const y2 = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * r * 2)));
-        const i2 = y2 * w + x2;
-        const c2 = finalizeStrokeColor(
-          refBlur[i2 * 3], refBlur[i2 * 3 + 1], refBlur[i2 * 3 + 2], params, palette, rand);
-        sink.emit({
-          pts: [[x2, y2], [x2, y2]], radius: Math.max(1, Math.round(rDab * 0.8)),
-          color: c2, opacity, layer: ri,
-          tex: getStrokeTexture(brushTex, ri, x2, y2),
-          dryBrush: 0, height: impastoStrength,
-        });
-      }
-
-      if ((i & 4095) === 0) onProgress((ri + i / nDabs) / radii.length);
-    }
-    onProgress((ri + 1) / radii.length);
-  }
-}
-
-// ─── Algorithm: colored pencil sketch ─────────────────────────────────────────
-// Stroke-based hatching (not a filter): white paper, directional colored hatch
-// strokes that skip highlights, cross-hatching in shadows, edge-emphasis
-// strokes along strong contours, and a deterministic paper-grain pass.
-
-function paintPencil(env) {
-  const { srcRGB, canvasRGB, w, h, radii, params, palette, onProgress, brushTex, sink } = env;
-  const { maxStrokeLength, minStrokeLength, gridFactor, opacity, tensorSigma = 0 } = params;
-  const rand = mulberry32(0x9E3779B9 ^ (params.seed | 0));
-
-  // Pencil always draws on near-white paper, regardless of underpaintMode.
-  canvasRGB.fill(252);
-
-  const refBlur = gaussianBlurRGB(srcRGB, w, h, 1.0);
-  const lum = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    lum[i] = (0.299 * refBlur[i*3] + 0.587 * refBlur[i*3+1] + 0.114 * refBlur[i*3+2]) / 255;
-  }
-
-  // Smoothed direction field for coherent hatching; raw Sobel for edges.
-  const { gx, gy, gmag } = computeGradientsST(refBlur, w, h, Math.max(2, tensorSigma));
-  const edges = computeGradients(refBlur, w, h);
-  let maxEdge = 0;
-  for (let i = 0; i < edges.gmag.length; i++) if (edges.gmag[i] > maxEdge) maxEdge = edges.gmag[i];
-  const edgeThresh = 0.30 * maxEdge;
-
-  const globalHatch = Math.PI / 4; // fallback hatch angle in flat regions
-
-  // Pencil pigment: source color, slightly more saturated and darker.
-  const pencilColor = (idx, darken = 0.82) => {
-    let [hh, ss, vv] = rgbToHsv(refBlur[idx*3], refBlur[idx*3+1], refBlur[idx*3+2]);
-    ss = Math.min(1, ss * 1.3 + 0.05);
-    vv = vv * darken;
-    const [r2, g2, b2] = hsvToRgb(hh, ss, vv);
-    return finalizeStrokeColor(r2, g2, b2, params, palette, rand);
-  };
-
-  // One hatch stroke: 3-point polyline with a slight midpoint wobble so
-  // strokes read as hand-drawn rather than ruled.
-  const hatchStroke = (cx, cy, theta, len, r, color, op, tex = null) => {
-    const dx = Math.cos(theta), dy = Math.sin(theta);
-    const half = len / 2;
-    const wob = (rand() - 0.5) * r * 1.2;
-    const p0 = [cx - dx * half, cy - dy * half];
-    const pm = [cx - dy * wob, cy + dx * wob];
-    const p1 = [cx + dx * half, cy + dy * half];
-    sink.emit({ pts: [p0, pm, p1], radius: r, color, opacity: op, layer: 0, tex, dryBrush: 0, height: 0 });
-  };
-
-  // Passes A/B: hatching (+ cross-hatching in dark regions) per pencil radius.
-  const nPasses = radii.length;
-  for (let ri = 0; ri < nPasses; ri++) {
-    const r = Math.max(0.7, radii[ri] * 0.7); // pencil tips are thin
-    const spacing = Math.max(2, Math.round(radii[ri] * 2 * gridFactor));
-    for (let y = 0; y < h; y += spacing) {
-      for (let x = 0; x < w; x += spacing) {
-        const jx = Math.max(0, Math.min(w - 1, Math.round(x + (rand() - 0.5) * spacing)));
-        const jy = Math.max(0, Math.min(h - 1, Math.round(y + (rand() - 0.5) * spacing)));
-        const idx = jy * w + jx;
-        const d = 1 - lum[idx]; // darkness 0..1
-
-        // Light areas stay mostly paper.
-        if (rand() > d * 1.35 + 0.06) continue;
-
-        let theta = gmag[idx] > 1e-4 ? Math.atan2(gx[idx], -gy[idx]) : globalHatch;
-        theta += (rand() - 0.5) * 0.2;
-        const len = minStrokeLength + rand() * Math.max(0, maxStrokeLength - minStrokeLength);
-        const color = pencilColor(idx);
-        const op = opacity * (0.45 + 0.55 * d);
-
-        const tex = getStrokeTexture(brushTex, ri, jx, jy);
-        hatchStroke(jx, jy, theta, len, r, color, op, tex);
-        // Cross-hatch shadows at ~+80°.
-        if (d > 0.55) hatchStroke(jx, jy, theta + 1.4, len * 0.8, r, color, op * 0.8, tex);
-      }
-    }
-    onProgress((ri + 1) / (nPasses + 1));
-  }
-
-  // Pass C: edge emphasis — thin short strokes along edge tangents.
-  const rEdge = Math.max(0.7, (radii[radii.length - 1] ?? 1) * 0.5);
-  for (let y = 0; y < h; y += 2) {
-    for (let x = 0; x < w; x += 2) {
-      const idx = y * w + x;
-      if (edges.gmag[idx] <= edgeThresh) continue;
-      if (rand() > 0.6) continue; // thin out for a sketchy, broken line
-      const theta = Math.atan2(edges.gx[idx], -edges.gy[idx]); // ⊥ gradient = along edge
-      const len = 3 + rand() * 4;
-      const color = pencilColor(idx, 0.6); // darker pigment on contours
-      hatchStroke(x, y, theta, len, rEdge, color, Math.min(1, opacity * 1.4),
-                  getStrokeTexture(brushTex, radii.length - 1, x, y));
-    }
-  }
-
-  // Pass D: deterministic paper grain (multiplicative hash noise) — stable
-  // across video frames because it depends only on pixel coordinates.
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-      const g = 1 - 0.05 * (n - Math.floor(n));
-      const ci = (y * w + x) * 3;
-      canvasRGB[ci] *= g; canvasRGB[ci + 1] *= g; canvasRGB[ci + 2] *= g;
-    }
-  }
-  onProgress(1);
-}
-
 // ─── Algorithm registry ───────────────────────────────────────────────────────
 
 const ALGORITHMS = {
   hertzmann:   paintHertzmann,   // Hertzmann 1998 — curved brush strokes
   litwinowicz: paintLitwinowicz, // Litwinowicz 1997 — impressionist strokes
-  haeberli:    paintHaeberli,    // Haeberli 1990 — paint by numbers
-  pencil:      paintPencil,      // colored pencil sketch (hatching)
-  shiraishi:   paintShiraishi,   // Shiraishi–Yamaguchi 2000 — strokes by image moments (styles/shiraishi.js)
+  relaxation:  paintRelaxation,  // Hertzmann 2001 — Paint By Relaxation (styles/relaxation.js)
   stipple:     paintStipple,     // Secord 2002 — weighted Voronoi stippling (styles/stipple.js)
   // 'neural' (Paint Transformer 2021) is registered lazily by ensureNeural()
   // so classic modes never load onnxruntime.

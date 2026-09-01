@@ -11,11 +11,9 @@ Implements five stroke-based rendering (SBR) algorithms — four from classic no
 | Style | Paper / origin | Character |
 |---|---|---|
 | **Curved Brush Strokes — Hertzmann '98** | Hertzmann, *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (SIGGRAPH 1998) | Layered coarse→fine curved strokes that follow image contours. The default and most tunable style. |
+| **Curved Strokes by Relaxation — Hertzmann '01** | Hertzmann, *Paint By Relaxation* (CGI 2001) | The same curved strokes, but placed by minimizing an energy: a stroke is painted only when the improvement it makes outweighs the area it costs. The result is markedly more economical — a few hundred deliberate strokes instead of thousands — with more of the ground left showing. |
 | **Impressionist Strokes — Litwinowicz '97** | Litwinowicz, *Processing Images and Video for an Impressionist Effect* (SIGGRAPH 1997) | Short oriented strokes on a jittered grid, clipped at strong edges so paint never bleeds across object boundaries. |
-| **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
-| **Strokes by Image Moments — Shiraishi '00** | Shiraishi & Yamaguchi, *An Algorithm for Automatic Painterly Rendering Based on Local Source Image Approximation* (NPAR 2000) | Rectangular strokes fitted to local color regions via second-order image moments — each stroke's position, angle, length, and width follow the region it covers. Flat, patchwork-like paint areas. |
 | **Voronoi Stippling — Secord '02** | Secord, *Weighted Voronoi Stippling* (NPAR 2002) | Thousands of ink dots distributed by Lloyd relaxation, dense in dark areas, sparse in light ones — the classic hand-stippled illustration look. |
-| **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
 | **Neural Paint Transformer — Liu '21** | Liu et al., *Paint Transformer: Feed Forward Neural Painting with Stroke Prediction* (ICCV 2021) | A transformer predicts, coarse to fine, the set of strokes that best reconstructs the image. Runs entirely in your browser via onnxruntime-web (WebGPU with wasm fallback) — first use downloads the ~19 MB model once and caches it. Slower than the classic styles but places strokes globally rather than by local heuristics. |
 
 Each algorithm responds to a different subset of the controls — irrelevant controls hide automatically when you switch styles. Hover any setting's ⓘ icon for an explanation.
@@ -154,7 +152,7 @@ Modulates each stroke's coverage with a procedural bristle tile: streaks along t
 #### Auto detail (salience) + strength
 **Default:** off &emsp; **Strength range:** 0.0 – 1.0, default 0.5
 
-Automatically finds the salient parts of the image (edge energy + local contrast, optionally biased toward the frame center) and concentrates finer, denser strokes there — no mask required. Combines with an uploaded detail mask by taking the stronger of the two signals. Affects the Hertzmann, Litwinowicz, and Haeberli styles. Enable **Show detail map** under Experimental to see exactly what the detector found.
+Automatically finds the salient parts of the image (edge energy + local contrast, optionally biased toward the frame center) and concentrates finer, denser strokes there — no mask required. Combines with an uploaded detail mask by taking the stronger of the two signals. Affects the Hertzmann, Relaxation, and Litwinowicz styles. Enable **Show detail map** under Experimental to see exactly what the detector found.
 
 ---
 
@@ -288,6 +286,21 @@ Both are deterministic and reproduce exactly from the seed. The batched painting
 
 ---
 
+#### Stroke economy / Relaxation passes / Candidates per cell (Relaxation only)
+
+**Stroke economy** is how much better a stroke must make the picture before it is worth painting, in average Lab improvement per unit of area covered. Higher leaves more ground showing and fewer, bolder strokes; lower fills in. **Relaxation passes** is how many times the optimizer sweeps each layer (each pass sees the previous one's strokes). **Candidates per cell** is how many alternative strokes it tries before picking the best — the search for a better position.
+
+Relaxation is an optimization, so it costs several times a normal render; use Fast preview while dialling settings. It also starts from a neutral ground: a blurred underpainting already sits near the energy minimum, so "Blurred image" is treated as "Average color".
+
+---
+
+#### Edge tangent flow
+**Options:** Off · Subtle · Medium · Strong — **Default:** Off
+
+An iteratively refined stroke-direction field (Kang, Lee & Chui 2007). Where *Direction smoothing* blurs directions — including across edges — this aligns them *along* edges, so strokes follow contours confidently instead of wandering near boundaries. Costs extra time and, in the curved-stroke style, disables the GPU map path (there is no ETF shader).
+
+---
+
 #### Fast preview
 **Default:** off
 
@@ -330,10 +343,9 @@ The **Preset** dropdown sets all parameters at once — including which algorith
 | **Pointillist** | Hertzmann '98 | Very short dabs on a fine grid, no curvature — Seurat / Signac |
 | **Wash** | Hertzmann '98 | Large translucent strokes with high colour jitter — loose watercolour |
 | **Impressionist Strokes** | Litwinowicz '97 | Dense short oriented strokes, crisp object edges |
-| **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
-| **Patchwork** | Shiraishi '00 | Moment-fitted strokes that follow local color regions |
+| **Deliberate** | Hertzmann '01 | Energy-placed strokes over a neutral ground, coherent flow |
+| **Economical** | Hertzmann '01 | Strong area penalty — sparse, confident marks on white |
 | **Stippled** | Secord '02 | Evenly-spaced ink dots, dense in shadows |
-| **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
 
 Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
 
@@ -341,7 +353,7 @@ Selecting a preset fills all controls; any subsequent edit switches the dropdown
 
 ### Detail (optional, Image mode)
 
-Two ways to concentrate detail where it matters; when both are active the stronger signal wins at each pixel. In the Hertzmann style the detail map lowers the error threshold T locally; in Litwinowicz it adds extra, thinner strokes; in Haeberli it shrinks dabs and adds extra ones.
+Two ways to concentrate detail where it matters; when both are active the stronger signal wins at each pixel. In the Hertzmann style the detail map lowers the error threshold T locally; in Relaxation it lowers the price a stroke must beat, so strokes are accepted more readily; in Litwinowicz it adds extra, thinner strokes.
 
 **Auto detail (salience):** enable the checkbox and the renderer finds the subject automatically (edge energy + local contrast, center-weighted). No mask needed.
 

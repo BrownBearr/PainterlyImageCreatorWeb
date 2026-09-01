@@ -5,25 +5,35 @@
 class PainterWorker {
   constructor() {
     this._w = new Worker('worker.js');
-    this._resolve = null;
-    this._reject = null;
-    this._onProgress = null;
+    this._pending = null;   // { resolve, reject, onProgress, onStatus }
     this._w.onmessage = (e) => {
       const { type } = e.data;
-      if (type === 'progress') { this._onProgress?.(e.data.value); }
-      else if (type === 'status') { this._onStatus?.(e.data.message); }
-      else if (type === 'done') { this._resolve?.(e.data.result); }
-      else if (type === 'error') { this._reject?.(new Error(e.data.message)); }
+      const p = this._pending;
+      if (!p) return;       // late message from a terminated/settled render — ignore
+      if (type === 'progress') { p.onProgress?.(e.data.value); }
+      else if (type === 'status') { p.onStatus?.(e.data.message); }
+      else if (type === 'done') { this._pending = null; p.resolve(e.data.result); }
+      else if (type === 'error') { this._pending = null; p.reject(new Error(e.data.message)); }
     };
-    this._w.onerror = (e) => this._reject?.(e);
+    this._w.onerror = (e) => this._settleError(new Error(e.message || 'worker error'));
+  }
+
+  _settleError(err) {
+    const p = this._pending;
+    this._pending = null;
+    p?.reject(err);
   }
 
   render(imageData, params, onProgress, prevState, onStatus) {
+    // One render in flight per worker. The result is matched to the caller by
+    // the single _pending slot, so an overlapping call would hand this frame's
+    // result to the wrong promise — fail loudly instead of silently swapping
+    // frames.
+    if (this._pending) {
+      return Promise.reject(new Error('PainterWorker is already rendering — one render at a time'));
+    }
     return new Promise((resolve, reject) => {
-      this._resolve = resolve;
-      this._reject = reject;
-      this._onProgress = onProgress ?? null;
-      this._onStatus = onStatus ?? null;
+      this._pending = { resolve, reject, onProgress: onProgress ?? null, onStatus: onStatus ?? null };
       const msg = {
         type: 'render',
         imageData: { data: new Uint8ClampedArray(imageData.data), width: imageData.width, height: imageData.height },
@@ -34,7 +44,12 @@ class PainterWorker {
     });
   }
 
-  terminate() { this._w.terminate(); }
+  // Terminating with a render in flight must reject it, otherwise the caller
+  // awaits a promise that can never settle and the export hangs forever.
+  terminate() {
+    this._w.terminate();
+    this._settleError(new Error('render cancelled'));
+  }
 }
 
 // ─── Minimal ZIP writer (STORE, no compression) ───────────────────────────────
@@ -168,6 +183,7 @@ class VideoProcessor {
 
   async process(videoFile, params, fps) {
     this._cancelled = false;
+    this._encoderError = null;
 
     // ── 1. Load video metadata ─────────────────────────────────────────────
     const videoEl = document.createElement('video');
@@ -191,7 +207,6 @@ class VideoProcessor {
 
     // ── 2. Decide encoding strategy ────────────────────────────────────────
     const hasWebCodecs = typeof VideoEncoder !== 'undefined';
-    const hasRVFC = typeof videoEl.requestVideoFrameCallback === 'function';
 
     const offscreen = new OffscreenCanvas(vw, vh);
     const octx = offscreen.getContext('2d');
@@ -211,7 +226,10 @@ class VideoProcessor {
           chunk.copyTo(d);
           encChunks.push({ timestamp_us: chunk.timestamp, isKey: chunk.type === 'key', data: d });
         },
-        error: (e) => { throw e; },
+        // Throwing here cannot propagate to the awaiting caller — it would be
+        // swallowed and the export would finish with a truncated file. Record
+        // it and surface it at the next checkpoint instead.
+        error: (e) => { this._encoderError = e; },
       });
 
       // Try VP8 first, fall back to VP9
@@ -236,53 +254,72 @@ class VideoProcessor {
     }
 
     // ── 3. Frame-by-frame: extract → paint → encode/collect ───────────────
-    // We seek to each target time and use requestVideoFrameCallback (when
-    // available) to get the actual presented frame's mediaTime, avoiding the
-    // keyframe-landing duplicate-frame problem that seek-only extraction causes.
+    //
+    // Seek-and-draw only. An earlier version called play() and waited for
+    // requestVideoFrameCallback to read the decoded frame's mediaTime, which
+    // caused both of the export's symptoms:
+    //
+    //  - drawImage ran *after* pause(), a different moment than the callback,
+    //    so the pixels drawn could be a later frame than the timestamp said —
+    //    frames appearing duplicated or out of order.
+    //  - timestamps taken from mediaTime are not on the output fps grid, and
+    //    the muxer writes block timecodes straight from them at 1 ms
+    //    resolution, so frame spacing came out irregular (33, 41, 33, 58 ms
+    //    instead of a steady 33.3) — which is what the hitching was.
+    //
+    // After `seeked` the element's current frame is the seeked one and is ready
+    // for drawImage, so no playback is needed. Timestamps come from the fps
+    // grid, which is monotonic by construction and gives an exactly uniform
+    // cadence. Resampling a video to a different fps legitimately repeats or
+    // drops source frames; that is duplication, not misordering.
     let prevTemporalState = null; // { prevCanvasRGB, prevSrcRGB } for temporal coherence
+
+    const seekTo = (t) => new Promise((res, rej) => {
+      let done = false;
+      const ok = () => { if (!done) { done = true; cleanup(); res(); } };
+      const fail = () => { if (!done) { done = true; cleanup(); rej(new Error('seek failed')); } };
+      const cleanup = () => {
+        videoEl.removeEventListener('seeked', ok);
+        videoEl.removeEventListener('error', fail);
+        clearTimeout(timer);
+      };
+      // A seek that never completes would hang the whole export.
+      const timer = setTimeout(ok, 5000);
+      videoEl.addEventListener('seeked', ok, { once: true });
+      videoEl.addEventListener('error', fail, { once: true });
+      videoEl.currentTime = t;
+    });
 
     for (let i = 0; i < totalFrames; i++) {
       if (this._cancelled) break;
 
       this._onStatus(`Painting frame ${i + 1} / ${totalFrames}`);
 
-      const targetTime = i / fps;
-      videoEl.currentTime = targetTime;
-      await new Promise((res) => videoEl.addEventListener('seeked', res, { once: true }));
+      await seekTo(i / fps);
       if (this._cancelled) break;
 
-      // Use rVFC to get the exact mediaTime of the frame the browser actually
-      // decoded — this prevents using a stale/keyframe time as the timestamp.
-      let timestamp_us;
-      if (hasRVFC) {
-        // After seeked fires, rVFC will call back on the next presented frame.
-        // We must call play() briefly to trigger frame presentation; we pause
-        // immediately inside the callback to keep playback frozen.
-        const meta = await new Promise((res) => {
-          videoEl.requestVideoFrameCallback((_, m) => {
-            videoEl.pause();
-            res(m);
-          });
-          videoEl.play().catch(() => {});
-        });
-        timestamp_us = Math.round(meta.mediaTime * 1_000_000);
-      } else {
-        // Fallback: use the seek target time (may have small inaccuracies but
-        // produces monotonically-increasing timestamps which is what matters most).
-        timestamp_us = Math.round(targetTime * 1_000_000);
+      // Fixed output cadence: frame i is presented at exactly i/fps.
+      const timestamp_us = Math.round((i * 1_000_000) / fps);
+      if (timestamp_us <= lastTimestamp_us) {
+        // Only reachable at absurdly high fps where 1/fps rounds below 1 µs.
+        throw new Error('fps too high for microsecond frame timestamps');
       }
-
-      // Enforce strict monotonicity — the encoder will throw if timestamps go
-      // backwards or repeat (can happen when two seeks land on the same keyframe).
-      if (timestamp_us <= lastTimestamp_us) timestamp_us = lastTimestamp_us + Math.round(1_000_000 / fps);
       lastTimestamp_us = timestamp_us;
 
       octx.drawImage(videoEl, 0, 0);
       const frameData = octx.getImageData(0, 0, vw, vh);
 
-      const painted = await this._worker.render(frameData, params, (p) => {
-        this._onFrameProgress(i, totalFrames, p);
-      }, prevTemporalState);
+      let painted;
+      try {
+        painted = await this._worker.render(frameData, params, (p) => {
+          this._onFrameProgress(i, totalFrames, p);
+        }, prevTemporalState);
+      } catch (err) {
+        // cancel() terminates the worker, which rejects the in-flight render.
+        // That is expected here, not a failure to report.
+        if (this._cancelled) break;
+        throw err;
+      }
       if (this._cancelled) break;
 
       // Update temporal state for next frame if the worker sent back raw buffers
@@ -293,14 +330,19 @@ class VideoProcessor {
       }
 
       if (encoder) {
+        if (this._encoderError) throw this._encoderError;
         const imgd = new ImageData(new Uint8ClampedArray(painted.data), painted.width, painted.height);
         const bmp = await createImageBitmap(imgd);
-        const frame = new VideoFrame(bmp, { timestamp: timestamp_us });
+        // duration lets the muxer/player know the intended frame length even
+        // where a container rounds timecodes to milliseconds.
+        const frame = new VideoFrame(bmp, { timestamp: timestamp_us, duration: Math.round(1_000_000 / fps) });
         bmp.close();
         encoder.encode(frame, { keyFrame: i % 30 === 0 });
         frame.close();
         // Back-pressure
-        while (encoder.encodeQueueSize > 5) await new Promise(r => setTimeout(r, 16));
+        while (encoder.encodeQueueSize > 5 && !this._encoderError) {
+          await new Promise(r => setTimeout(r, 16));
+        }
       } else {
         // PNG fallback
         this._onStatus(`Encoding frame ${i + 1} / ${totalFrames} as PNG…`);
@@ -320,6 +362,16 @@ class VideoProcessor {
       this._onStatus('Flushing encoder…');
       await encoder.flush();
       encoder.close();
+      if (this._encoderError) throw this._encoderError;
+      // The muxer sorts by timestamp, but out-of-order output would mean the
+      // encoder emitted in decode order — worth knowing rather than silently
+      // reordering, since it changes which frame each timecode belongs to.
+      for (let k = 1; k < resultChunks.length; k++) {
+        if (resultChunks[k].timestamp_us <= resultChunks[k - 1].timestamp_us) {
+          console.warn('[video] encoder emitted chunks out of presentation order at', k);
+          break;
+        }
+      }
       this._onStatus('Muxing WebM…');
       const webm = muxWebM(resultChunks, vw, vh, fps, this._codec ?? 'V_VP8');
       triggerDownload(webm, 'painterly.webm');
@@ -392,9 +444,15 @@ class BatchProcessor {
       const imgData = await loadFileAsImageData(file);
       if (!imgData) { this._onStatus(`Skipping ${file.name} — not a valid image.`); continue; }
 
-      const painted = await this._worker.render(imgData, params, (p) => {
-        this._onFrameProgress(i, total, p);
-      });
+      let painted;
+      try {
+        painted = await this._worker.render(imgData, params, (p) => {
+          this._onFrameProgress(i, total, p);
+        });
+      } catch (err) {
+        if (this._cancelled) break;   // cancel() rejects the in-flight render
+        throw err;
+      }
       if (this._cancelled) break;
 
       const stem = file.name.replace(/\.[^.]+$/, '');
