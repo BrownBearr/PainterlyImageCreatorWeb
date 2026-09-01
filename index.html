@@ -391,6 +391,22 @@
           </select>
         </div>
 
+        <div class="field" data-algos="hertzmann">
+          <label>GPU acceleration <span class="tip" tabindex="0" data-tip="Runs the blur, Lab colour conversion, error map, edge detection and stroke rasterization on the GPU via WebGL2 — about 88% of this style's work. Falls back to the CPU automatically if WebGL2 is unavailable. GPU output is visually equivalent but not bit-identical to the CPU path, and it implies Stroke batching.">i</span></label>
+          <select id="gpu-accel">
+            <option value="0">Off (CPU)</option>
+            <option value="1">On (WebGL2)</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann">
+          <label>Stroke batching <span class="tip" tabindex="0" data-tip="Grows every stroke in a layer against the canvas as it was at the start of that layer, then paints them together — which is what Hertzmann's own pseudocode does. Required by GPU acceleration. Deterministic, but produces a slightly different (equally valid) painting from the default.">i</span></label>
+          <select id="stroke-batching">
+            <option value="0">Off (live canvas)</option>
+            <option value="1">On (per layer)</option>
+          </select>
+        </div>
+
         <div class="field" data-algos="haeberli">
           <label>Dab sizing <span class="tip" tabindex="0" data-tip="Fixed = every dab in a layer is the same size. By edge strength = dabs shrink near strong edges so detail survives (paper's size-by-local-detail).">i</span></label>
           <select id="haeberli-size">

@@ -19,6 +19,7 @@ Plain JavaScript at the repo root:
 | `vendor/ort/ort.min.js` | onnxruntime-web UMD bundle (lazy-loaded with neural.js; see `vendor/ort/VERSION.md`) |
 | `video-batch.js` | `PainterWorker` wrapper class, `ZipWriter`, video/batch processors |
 | `webm-muxer.js` | Third-party WebM muxer (bundled, do not edit) |
+| `gpu/gpu-hertzmann.js` | WebGL2 backend for Hertzmann (lazy-loaded by worker.js; maps + rasterizer) |
 | `tools/` | Offline Python tooling (ONNX conversion + CDN upload) and the determinism/parity harness (`parity.html`, `parity-common.js`, `parity-node.js`) — not served |
 
 The algorithm runs entirely inside `worker.js` to keep the UI thread free. `main.js` spawns the worker, posts `render` messages, and receives `progress`/`status`/`done`/`error` responses. `video-batch.js` wraps the worker in a `PainterWorker` class and handles multi-frame pipelines.
@@ -48,6 +49,12 @@ RNG & determinism: every algorithm is seeded — same `params.seed` + same param
 **Impasto** (Hertzmann 2002): `params.impastoProfile` selects the height model — `'flat'` (legacy: heightBuf accumulates stroke coverage), `'round'` (per-stroke height dome composited like paint: ridge along the spine, falloff to edges), `'bristle'` (dome × brush-tile grooves, needs brushTexture > 0 to differ from round). `applyImpastoLighting` takes `lightAngle`, `lightElevation` (0.5 = legacy default), and `specularStrength` (Blinn-Phong sheen; flat-surface specular is subtracted so flat regions stay untouched, matching the diffuse neutral-flat convention).
 
 The `env` object passed to each algorithm: `{ srcRGB, canvasRGB, w, h, radii, params, palette, heightBuf, onProgress, brushTex, detailMap, onStatus, prevState, sink }`.
+
+**GPU acceleration** (`params.gpuAccel`, Hertzmann only): profiling showed the algorithm is ~88% per-pixel map math plus rasterization and only ~1% stroke growth (the part that reads the live canvas), so `gpu/gpu-hertzmann.js` moves blur, sRGB→Lab, the Lab error map, Sobel gradients, the underpainting blur and stroke rasterization to WebGL2, keeping the canvas resident in a texture across layers. Stroke *generation* stays on the CPU because it consumes the seeded RNG in a fixed order. Measured 3.4–4.4× end to end on an M1; see `tools/gpu-hertzmann-RESULTS.md` and the harness `tools/gpu-bench.html`.
+
+Invariants worth not regressing: textures are uploaded row 0 = image row 0 and every pass addresses them with unflipped `gl_FragCoord`/`texelFetch` — flipping only the stroke pass mirrors strokes about the image centre (the centre row still matches, so it spot-checks as correct). The rasterizer draws **one instance per stroke** taking the min distance over the whole polyline, matching the CPU's max-coverage-into-one-mask semantics; one capsule per segment double-blends at joints. `refBlur.rgb` + error map share one RGBA32F target because readback, not shading, dominates. Anything the GPU rasterizer does not implement (brush texture, dry-brush, impasto relief) falls back to the CPU rasterizer per layer; `tensorSigma > 0` falls back to CPU maps.
+
+**Stroke batching** (`params.strokeBatching`, Hertzmann only): grows a layer's strokes against the canvas as it was at the *start* of the layer, then emits them together — which is what Hertzmann's pseudocode does (paintLayer collects into a set S and paints S after the cell loop). It is the precondition for GPU rasterization and is implied by `gpuAccel`. RNG draw order is unchanged, so it is deterministic and separately baselined (`hertzmann-batched`, `hertz-batch-jitter`).
 
 **Parity harness** (`tools/`): `node tools/parity-node.js` renders every algorithm × feature config three times (seed 1×2, seed 2) and checks determinism, seed sensitivity, and the committed `PARITY_BASELINE` hashes in `tools/parity-common.js`; `tools/parity.html` is the in-browser equivalent (serve the repo root, open `/tools/parity.html`). Run it after any change to worker.js, brush-texture.js, or styles/; if an output change is intentional, regenerate with `node tools/parity-node.js --baseline` and paste the result into `parity-common.js`.
 

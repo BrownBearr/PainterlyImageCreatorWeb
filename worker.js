@@ -878,6 +878,18 @@ function paintHertzmann(env) {
           sizeJitter = 0, angleJitter = 0, opacityJitter = 0 } = params;
   const rand = mulberry32(0x1E52A11 ^ (params.seed | 0));
 
+  // Stroke batching: grow every stroke in a layer against the canvas as it was
+  // at the *start* of that layer, then emit them all at the end. This is what
+  // Hertzmann's own pseudocode does — paintLayer collects strokes into a set S
+  // and paints S after the cell loop — whereas the default path emits each
+  // stroke immediately, so later strokes in a layer grow against earlier ones.
+  //
+  // It exists because it is the precondition for GPU rasterization: a whole
+  // layer's strokes become independent of each other and can be handed to the
+  // GPU as one batch. RNG draw order is identical either way, so this path is
+  // still fully deterministic and is parity-baselined separately.
+  const batched = !!params.strokeBatching;
+
   // Temporal coherence: when prevState is provided, seed canvas from previous frame
   // and build a per-pixel diff mask to skip unchanged cells.
   let cellDiffMap = null; // Float32Array(w * h) — max pixel diff per cell, built per layer
@@ -895,21 +907,51 @@ function paintHertzmann(env) {
       const db = Math.abs(srcRGB[i*3+2] - prevState.prevSrcRGB[i*3+2]);
       cellDiffMap[i] = (dr + dg + db) / 3;
     }
+  } else if (env.gpu && (params.underpaintMode ?? 'blur') === 'blur') {
+    // The blur underpaint is the same Gaussian layer 0 computes, so run it on
+    // the GPU and leave the result resident as the canvas texture — no CPU
+    // Gaussian (~275ms at 1080p) and no upload afterwards.
+    env.gpu.setSource(srcRGB);
+    env.gpu.underpaintBlur(Math.max(0.1, (radii[0] ?? 8) * 0.5), canvasRGB);
   } else {
     applyUnderpaint(env);
+    // From here the canvas texture is authoritative: the GPU rasterizes into it
+    // and reads it back into canvasRGB after each layer, which is what stroke
+    // growth reads.
+    if (env.gpu) { env.gpu.setSource(srcRGB); env.gpu.setCanvas(canvasRGB); }
   }
+  // Temporal coherence seeds the canvas from the previous frame, so the GPU
+  // still needs both textures uploaded.
+  if (env.gpu && useTemporal) { env.gpu.setSource(srcRGB); env.gpu.setCanvas(canvasRGB); }
+
+  // GPU map pipeline: blur + Lab + error map + Sobel are ~67% of this
+  // algorithm's runtime and are pure per-pixel work, so they move wholesale to
+  // the GPU when the backend is active. The structure-tensor variant has no GPU
+  // implementation, so tensorSigma > 0 stays on the CPU maps.
+  const gpu = env.gpu || null;
+  const gpuMaps = (gpu && tensorSigma <= 0) ? {
+    refBlur: new Float32Array(w * h * 3),
+    gx: new Float32Array(w * h), gy: new Float32Array(w * h), gmag: new Float32Array(w * h),
+    err: new Float32Array(w * h),
+  } : null;
 
   for (let ri = 0; ri < radii.length; ri++) {
     const radius = Math.max(1, Math.round(radii[ri]));
     const sigma = Math.max(0.1, radius * 0.5);
 
-    const refBlur = gaussianBlurRGB(srcRGB, w, h, sigma);
-    const labRef = buildLabBuffer(refBlur, w, h);
-    const { gx, gy, gmag } = tensorSigma > 0
-      ? computeGradientsST(refBlur, w, h, tensorSigma)
-      : computeGradients(refBlur, w, h);
-    const labCanvas = buildLabBuffer(canvasRGB, w, h);
-    const err = computeErrorMap(labRef, labCanvas, w, h);
+    let refBlur, gx, gy, gmag, err;
+    if (gpuMaps) {
+      gpu.layerMaps(sigma, gpuMaps);
+      ({ refBlur, gx, gy, gmag, err } = gpuMaps);
+    } else {
+      refBlur = gaussianBlurRGB(srcRGB, w, h, sigma);
+      const labRef = buildLabBuffer(refBlur, w, h);
+      ({ gx, gy, gmag } = tensorSigma > 0
+        ? computeGradientsST(refBlur, w, h, tensorSigma)
+        : computeGradients(refBlur, w, h));
+      const labCanvas = buildLabBuffer(canvasRGB, w, h);
+      err = computeErrorMap(labRef, labCanvas, w, h);
+    }
 
     const grid = Math.max(1, Math.round(radius * gridFactor));
     const cells = [];
@@ -921,6 +963,11 @@ function paintHertzmann(env) {
     shuffleArray(cells, rand);
 
     const isFirstLayer = ri === 0;
+
+    // Snapshot the layer-start canvas for stroke growth; strokes queue up and
+    // are emitted together once the cell loop finishes.
+    const growCanvas = batched ? canvasRGB.slice() : canvasRGB;
+    const pending = batched ? [] : null;
 
     for (const [cx0, cy0] of cells) {
       const cx1 = Math.min(w, cx0 + grid), cy1 = Math.min(h, cy0 + grid);
@@ -947,17 +994,23 @@ function paintHertzmann(env) {
       const strokeOpacity = Math.max(0, Math.min(1, opacity * (1 + (rand() * 2 - 1) * opacityJitter)));
 
       const { pts, color } = makeCurvedStroke(
-        sx, sy, strokeRadius, refBlur, canvasRGB, gx, gy, gmag, w, h,
+        sx, sy, strokeRadius, refBlur, growCanvas, gx, gy, gmag, w, h,
         { maxLen: maxStrokeLength, minLen: minStrokeLength, curvature, angleJitter, rand }
       );
 
       const strokeColor = finalizeStrokeColor(color[0], color[1], color[2], params, palette, rand);
 
-      sink.emit({
+      const rec = {
         pts, radius: strokeRadius, color: strokeColor, opacity: strokeOpacity, layer: ri,
         tex: getStrokeTexture(brushTex, ri, sx, sy),
         dryBrush: dryBrushAmount, height: impastoStrength,
-      });
+      };
+      if (batched) pending.push(rec); else sink.emit(rec);
+    }
+
+    if (batched) {
+      for (const rec of pending) sink.emit(rec);
+      if (sink.flush) sink.flush(ri);
     }
 
     onProgress((ri + 1) / radii.length);
@@ -1325,6 +1378,44 @@ const ALGORITHMS = {
   // so classic modes never load onnxruntime.
 };
 
+// GPU backend is loaded on demand so the classic CPU path never pays for it
+// (and so the Node parity runner, which stubs importScripts, never sees it).
+let _gpuLoaded = false;
+function ensureGpuBackend() {
+  if (!_gpuLoaded) {
+    try { importScripts('gpu/gpu-hertzmann.js'); } catch (e) { return false; }
+    _gpuLoaded = true;
+  }
+  return typeof createGpuHertzmann === 'function'
+      && typeof gpuHertzmannSupported === 'function'
+      && gpuHertzmannSupported();
+}
+
+// Sink that buffers a layer's strokes and hands them to the GPU in one batch.
+// Falls back to the CPU rasterizer for any layer containing a stroke the GPU
+// path does not implement (textured / dry-brush / impasto relief), so enabling
+// GPU never silently drops an effect.
+function makeGpuSink(env, gpu) {
+  let batch = [];
+  const cpu = makeCanvasSink(env);
+  return {
+    emit(s) { batch.push(s); },
+    flush() {
+      if (!batch.length) return;
+      const solid = batch.every(s => !(s.tex && s.tex.strength > 0) && !s.dryBrush && !s.height && !s.dot);
+      if (solid) {
+        gpu.rasterize(batch);
+        gpu.readCanvas(env.canvasRGB);   // CPU needs the canvas for the next layer's stroke growth
+      } else {
+        for (const s of batch) cpu.emit(s);
+        gpu.setCanvas(env.canvasRGB);    // push the CPU result back so GPU maps stay correct
+      }
+      batch = [];
+    },
+    end() { this.flush(); },
+  };
+}
+
 function ensureNeural() {
   if (!ALGORITHMS.neural) {
     importScripts('vendor/ort/ort.min.js', 'neural.js');
@@ -1388,6 +1479,29 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
     prevState: isHertzmann ? (prevState || null) : null,
   };
   env.sink = makeCanvasSink(env);
+
+  // GPU acceleration (Hertzmann only). Batching is a precondition — a layer's
+  // strokes have to be independent of one another to be drawn as one batch — so
+  // requesting GPU implies it. Any failure here falls back to the CPU path
+  // rather than erroring the render.
+  if (params.gpuAccel && isHertzmann && !params.salienceDebug) {
+    try {
+      if (ensureGpuBackend()) {
+        const gpu = createGpuHertzmann(w, h);
+        if (gpu) {
+          env.gpu = gpu;
+          env.params = params = Object.assign({}, params, { strokeBatching: true });
+          env.sink = makeGpuSink(env, gpu);
+          if (onStatus) onStatus('GPU: WebGL2 backend active');
+        }
+      } else if (onStatus) {
+        onStatus('GPU unavailable — using CPU path');
+      }
+    } catch (e) {
+      env.gpu = null;
+      if (onStatus) onStatus('GPU init failed (' + e.message + ') — using CPU path');
+    }
+  }
   // Dev-only stroke capture (GPU rasterizer prototype): when params.captureStrokes
   // is set, record a shallow copy of every emitted StrokeRecord in emit order.
   // Inert and zero-cost otherwise — the parity harness never sets the flag.
@@ -1403,6 +1517,7 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
         });
         inner.emit(s);
       },
+      flush(layer) { if (inner.flush) inner.flush(layer); },
       end() { inner.end(); },
     };
   }
@@ -1416,6 +1531,8 @@ async function paintify(imageData, params, onProgress, prevState, onStatus) {
     onProgress(1);
   } else {
     await paint(env); // classic algorithms are sync; neural returns a promise
+    if (env.sink.end) env.sink.end();   // flush any batch still held by the GPU sink
+    if (env.gpu) { env.gpu.destroy(); env.gpu = null; }
     applyImpastoLighting(env);
   }
 

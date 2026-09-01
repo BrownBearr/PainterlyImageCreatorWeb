@@ -268,6 +268,26 @@ What the canvas is filled with before any strokes are placed.
 
 ---
 
+#### GPU acceleration (Curved Brush Strokes only)
+**Options:** Off (CPU) · On (WebGL2) — **Default:** Off
+
+Runs the Gaussian blur, Lab colour conversion, error map, edge detection, underpainting and stroke rasterization on the GPU — about 88% of this style's work. Measured **3.4–4.4× faster** end to end on an Apple M1 (640×480 through 1920×1080); the gap grows with resolution and stroke count.
+
+Falls back to the CPU automatically when WebGL2 or float render targets are unavailable, and per layer for anything the GPU rasterizer does not implement (brush texture, dry-brush, impasto relief). Direction smoothing (structure tensor) has no GPU pass, so it keeps the CPU maps and sees no speedup.
+
+GPU output is visually equivalent but **not** bit-identical to the CPU path — float rounding differs between drivers — so the CPU path remains the reproducible reference. Turning this on also turns on Stroke batching. See `tools/gpu-hertzmann-RESULTS.md`.
+
+---
+
+#### Stroke batching (Curved Brush Strokes only)
+**Options:** Off (live canvas) · On (per layer) — **Default:** Off
+
+Off, each stroke is painted as soon as it is grown, so later strokes in a layer grow against earlier ones. On, every stroke in a layer is grown against the canvas as it was at the *start* of that layer and they are all painted together — which is what Hertzmann's original pseudocode does.
+
+Both are deterministic and reproduce exactly from the seed. The batched painting differs slightly from the default (mean difference around 1/255) but is equally valid. GPU acceleration requires it.
+
+---
+
 #### Fast preview
 **Default:** off
 

@@ -1,5 +1,11 @@
 # GPU rasterizer prototype — results & recommendation
 
+> **Superseded in part.** Recommendation 3 below ("Keep Hertzmann on CPU") was
+> based on this rasterizer-only benchmark. Profiling the whole algorithm showed
+> rasterization is only ~21% of it, while the per-pixel maps are ~67% and the
+> live-canvas stroke growth just ~1% — so Hertzmann *was* worth porting, and now
+> runs 3.4–4.4× faster on the GPU. See `gpu-hertzmann-RESULTS.md`.
+
 Decision spike for "is a GPU version worth building?" Measured a WebGL2
 instanced-capsule rasterizer against the CPU `renderStrokeSolid` path on the
 *same* captured stroke lists. Run it yourself: serve the repo root and open

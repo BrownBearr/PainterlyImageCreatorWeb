@@ -56,6 +56,7 @@ const PRESET_DEFAULTS = {
   underpaintMode: 'blur', fastPreview: false,
   seed: 0,
   orientationFill: 0,
+  gpuAccel: 0, strokeBatching: 0,
   stipplePoints: 8000, stippleIters: 12,
   stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
 };
@@ -199,6 +200,8 @@ function applyPreset(key) {
   document.getElementById('fast-preview').checked = p.fastPreview;
   document.getElementById('seed').value = p.seed;
   setSlider('orientation-fill', p.orientationFill);
+  setSlider('gpu-accel', p.gpuAccel);
+  setSlider('stroke-batching', p.strokeBatching);
   setSlider('stipple-points', p.stipplePoints);
   setSlider('stipple-iters', p.stippleIters);
   setSlider('stipple-dot-min', p.stippleDotMin);
@@ -517,6 +520,8 @@ function getParams() {
     stippleDotMin:        num('stipple-dot-min'),
     stippleDotMax:        num('stipple-dot-max'),
     stippleInvert:        document.getElementById('stipple-invert').checked,
+    gpuAccel:             num('gpu-accel') > 0,
+    strokeBatching:       num('stroke-batching') > 0,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
     maskWidth:  maskImageData ? maskImageData.width  : 0,
@@ -764,6 +769,7 @@ document.getElementById('algorithm-select').addEventListener('change', () => {
  'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
  'impasto-strength', 'impasto-light', 'light-angle', 'impasto-profile', 'light-elevation', 'specular',
  'orientation-fill', 'haeberli-size', 'underpaint-mode', 'fast-preview',
+ 'gpu-accel', 'stroke-batching',
  'stipple-points', 'stipple-iters', 'stipple-dot-min', 'stipple-dot-max', 'stipple-invert']
   .forEach(id => {
     const el = document.getElementById(id);

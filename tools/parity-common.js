@@ -92,6 +92,7 @@ function parityBaseParams(overrides) {
     fastPreview: false, underpaintMode: 'blur',
     orientationFill: false, haeberliSizeByGradient: false,
     stipplePoints: 8000, stippleIters: 12, stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+    strokeBatching: false, gpuAccel: false,
     seed: 1,
   }, overrides);
 }
@@ -106,6 +107,10 @@ const PARITY_CONFIGS = [
   { name: 'hertzmann-imp-brist',params: parityBaseParams({ impastoStrength: 0.6, impastoLightStrength: 0.6, impastoProfile: 'bristle', brushTexture: 0.5, specularStrength: 0.3 }) },
   { name: 'hertzmann-palette',  params: parityBaseParams({ paletteSize: 8 }) },
   { name: 'hertzmann-tensor',   params: parityBaseParams({ tensorSigma: 2 }) },
+  // Layer-batched stroke growth: the semantics the GPU backend targets.
+  // Deterministic in its own right, so it gets a baseline of its own.
+  { name: 'hertzmann-batched',  params: parityBaseParams({ strokeBatching: true }) },
+  { name: 'hertz-batch-jitter', params: parityBaseParams({ strokeBatching: true, sizeJitter: 0.3, opacityJitter: 0.3, angleJitter: 10, hueJitter: 0.05 }) },
   { name: 'litwinowicz-plain',  params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3] }) },
   { name: 'litwinowicz-texture',params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3], brushTexture: 0.5, tensorSigma: 2 }) },
   { name: 'litwinowicz-orient', params: parityBaseParams({ algorithm: 'litwinowicz', brushRadii: [3], orientationFill: true }) },
@@ -130,6 +135,8 @@ const PARITY_BASELINE = {
   'hertzmann-imp-brist': '5b6656a8',
   'hertzmann-palette': '7daf04ec',
   'hertzmann-tensor': '78ef3250',
+  'hertzmann-batched': '6dbe9140',
+  'hertz-batch-jitter': 'b4d80993',
   'litwinowicz-plain': 'b061f358',
   'litwinowicz-texture': 'cff8b905',
   'litwinowicz-orient': 'e2ffc783',
