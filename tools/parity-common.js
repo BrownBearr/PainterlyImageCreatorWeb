@@ -92,6 +92,8 @@ function parityBaseParams(overrides) {
     fastPreview: false, underpaintMode: 'blur',
     orientationFill: false,
     etfRadius: 0, etfIterations: 2,
+    // Pinned rather than defaulted: the relaxation configs below are meant to
+    // exercise a multi-pass search regardless of what the shipped default is.
     relaxPasses: 2, relaxTrials: 2, relaxAreaWeight: 5,
     stipplePoints: 8000, stippleIters: 12, stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
     strokeBatching: false, gpuAccel: false,
