@@ -37,7 +37,7 @@
         <input type="file" id="file-input" accept="image/*" style="display:none" />
       </div>
 
-      <div class="sidebar-section" data-algos="hertzmann litwinowicz haeberli">
+      <div class="sidebar-section" data-algos="hertzmann litwinowicz relaxation">
         <h2>Detail (optional) <span class="tip" tabindex="0" data-tip="Concentrates finer, denser strokes where they matter: automatically (salience finds edges and contrast), via an uploaded grayscale mask (white = more detail), or both — the stronger signal wins.">i</span></h2>
 
         <label class="checkbox-row">
@@ -128,14 +128,15 @@
           <option value="pointillist">Pointillist</option>
           <option value="wash">Wash</option>
         </optgroup>
+        <optgroup label="Hertzmann '01 — Paint By Relaxation">
+          <option value="deliberate">Deliberate</option>
+          <option value="economical">Economical</option>
+        </optgroup>
         <optgroup label="Litwinowicz '97 — Impressionist Strokes">
           <option value="litstrokes">Impressionist Strokes</option>
         </optgroup>
-        <optgroup label="Haeberli '90 — Paint by Numbers">
-          <option value="daubs">Paint Daubs</option>
-        </optgroup>
-        <optgroup label="Sketch">
-          <option value="pencilsketch">Colored Pencil</option>
+        <optgroup label="Secord '02 — Weighted Voronoi Stippling">
+          <option value="stippled">Stippled</option>
         </optgroup>
         <option value="custom" disabled>Custom</option>
       </select>
@@ -146,9 +147,9 @@
       <h2>Style / Algorithm <span class="tip" tabindex="0" data-tip="The painting technique used. Each option is based on a classic computer-graphics paper and responds to a different subset of the settings below — irrelevant controls hide automatically.">i</span></h2>
       <select id="algorithm-select">
         <option value="hertzmann">Curved Brush Strokes — Hertzmann '98</option>
+        <option value="relaxation">Curved Strokes by Relaxation — Hertzmann '01</option>
         <option value="litwinowicz">Impressionist Strokes — Litwinowicz '97</option>
-        <option value="haeberli">Paint by Numbers — Haeberli '90</option>
-        <option value="pencil">Colored Pencil Sketch</option>
+        <option value="stipple">Voronoi Stippling — Secord '02</option>
         <option value="neural">Neural Paint Transformer — Liu '21</option>
       </select>
     </div>
@@ -159,22 +160,22 @@
     <div class="sidebar-section">
       <h2>Brush Layers</h2>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz relaxation">
         <label>Radii (coarse → fine) <span class="tip" tabindex="0" data-tip="Brush sizes in pixels, painted coarse to fine. Bigger first numbers block in large areas; smaller last numbers add detail. Fewer or larger values = more abstract.">i</span></label>
         <input type="text" id="brush-radii" value="8, 4, 2" placeholder="e.g. 8, 4, 2" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz relaxation">
         <label>Max stroke length <span class="tip" tabindex="0" data-tip="The longest a single stroke can grow. Higher = longer, more flowing strokes; lower = short dabs.">i</span> <span class="val" id="max-stroke-len-val">16</span></label>
         <input type="range" id="max-stroke-len" min="1" max="64" value="16" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz pencil">
+      <div class="field" data-algos="hertzmann litwinowicz relaxation">
         <label>Min stroke length <span class="tip" tabindex="0" data-tip="Strokes always reach this length before they are allowed to stop. Higher = more uniform, elongated strokes.">i</span> <span class="val" id="min-stroke-len-val">4</span></label>
         <input type="range" id="min-stroke-len" min="1" max="32" value="4" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann">
+      <div class="field" data-algos="hertzmann relaxation">
         <label>Curvature <span class="tip" tabindex="0" data-tip="How strongly strokes bend to follow image contours. 1 = fully curved; 0 = straight strokes.">i</span> <span class="val" id="curvature-val">1.0</span></label>
         <input type="range" id="curvature" min="0" max="1" value="1.0" step="0.05" />
       </div>
@@ -189,27 +190,27 @@
         <input type="range" id="threshold" min="1" max="200" value="50" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+      <div class="field" data-algos="hertzmann litwinowicz relaxation">
         <label>Grid factor <span class="tip" tabindex="0" data-tip="Spacing between stroke seed points relative to brush size. Lower = denser strokes and fuller coverage; higher = sparser, faster.">i</span> <span class="val" id="grid-factor-val">1.0</span></label>
         <input type="range" id="grid-factor" min="0.25" max="3" value="1.0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz neural stipple relaxation">
         <label>Opacity <span class="tip" tabindex="0" data-tip="Paint transparency per stroke. 1 = solid paint; lower values let layers below show through, like a wash.">i</span> <span class="val" id="opacity-val">0.9</span></label>
         <input type="range" id="opacity" min="0.1" max="1" value="0.9" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
         <label>Saturation jitter <span class="tip" tabindex="0" data-tip="Random per-stroke variation in color intensity. A little (0.05–0.1) adds lively, hand-mixed color; 0 = exact source colors.">i</span> <span class="val" id="sat-jitter-val">0</span></label>
         <input type="range" id="sat-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann">
+      <div class="field" data-algos="hertzmann relaxation">
         <label>Size jitter <span class="tip" tabindex="0" data-tip="Random per-stroke brush-size variation. A little (0.1–0.3) breaks up the uniform look of each layer; 0 = every stroke in a layer is the same size.">i</span> <span class="val" id="size-jitter-val">0</span></label>
         <input type="range" id="size-jitter" min="0" max="1" value="0" step="0.05" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
         <label>Brush texture <span class="tip" tabindex="0" data-tip="Bristle texture inside each stroke: paint streaks, dry breaks, and tapered ends. 0 = flat solid strokes (fastest); higher = more visible bristles.">i</span> <span class="val" id="brush-texture-val">0</span></label>
         <input type="range" id="brush-texture" min="0" max="1" value="0" step="0.05" />
       </div>
@@ -219,7 +220,38 @@
         <input type="range" id="neural-levels" min="2" max="6" value="4" step="1" />
       </div>
 
-      <div class="field" data-algos="hertzmann litwinowicz haeberli">
+      <div class="field" data-algos="stipple">
+        <label>Stipple points <span class="tip" tabindex="0" data-tip="Number of stipple dots. More dots = darker, finer-grained reproduction; fewer = sparse, abstract.">i</span> <span class="val" id="stipple-points-val">8000</span></label>
+        <input type="range" id="stipple-points" min="500" max="40000" value="8000" step="500" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Relaxation <span class="tip" tabindex="0" data-tip="Lloyd relaxation iterations. More spreads dots into an even, hand-stippled distribution; 0 leaves the raw random sampling.">i</span> <span class="val" id="stipple-iters-val">12</span></label>
+        <input type="range" id="stipple-iters" min="0" max="40" value="12" step="1" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Dot size min <span class="tip" tabindex="0" data-tip="Dot radius in the lightest areas.">i</span> <span class="val" id="stipple-dot-min-val">1</span></label>
+        <input type="range" id="stipple-dot-min" min="0.5" max="4" value="1" step="0.25" />
+      </div>
+
+      <div class="field" data-algos="stipple">
+        <label>Dot size max <span class="tip" tabindex="0" data-tip="Dot radius in the darkest areas.">i</span> <span class="val" id="stipple-dot-max-val">3</span></label>
+        <input type="range" id="stipple-dot-max" min="1" max="8" value="3" step="0.25" />
+      </div>
+
+      <label class="checkbox-row" data-algos="stipple">
+        <input type="checkbox" id="stipple-invert" />
+        Invert density
+        <span class="tip" tabindex="0" data-tip="Place dots in light areas instead of dark ones (white-on-black look when combined with a dark canvas).">i</span>
+      </label>
+
+      <div class="field" data-algos="hertzmann litwinowicz neural stipple relaxation">
+        <label>Seed <span class="tip" tabindex="0" data-tip="Random-number seed. The same seed with the same settings reproduces the exact same painting; change it to get a different arrangement of strokes.">i</span></label>
+        <input type="number" id="seed" value="0" step="1" />
+      </div>
+
+      <div class="field" data-algos="hertzmann litwinowicz relaxation">
         <label>Underpainting <span class="tip" tabindex="0" data-tip="What the canvas starts as before strokes: a blurred copy (fills gaps invisibly), the image's average color, or plain white (gaps show as white).">i</span></label>
         <select id="underpaint-mode">
           <option value="blur">Blurred image</option>
@@ -228,7 +260,7 @@
         </select>
       </div>
 
-      <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli pencil neural">
+      <label class="checkbox-row" data-algos="hertzmann litwinowicz neural stipple relaxation">
         <input type="checkbox" id="fast-preview" />
         Fast preview
         <span class="tip" tabindex="0" data-tip="Renders at reduced size (400px) then upscales. Much faster for tuning settings; turn off for the final full-quality render.">i</span>
@@ -240,7 +272,7 @@
       <h2>Experimental</h2>
 
       <div id="experimental-fields">
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Hue jitter <span class="tip" tabindex="0" data-tip="Random per-stroke shift of the color's hue. Higher = more rainbow-like color drift; Off = none.">i</span></label>
           <select id="hue-jitter">
             <option value="0">Off</option>
@@ -250,7 +282,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Value jitter <span class="tip" tabindex="0" data-tip="Random per-stroke lightness variation. Higher = more flicker between light and dark strokes; Off = none.">i</span></label>
           <select id="val-jitter">
             <option value="0">Off</option>
@@ -260,7 +292,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Palette size <span class="tip" tabindex="0" data-tip="Reduces all stroke colors to N colors chosen from the image. Off = full color; fewer colors give a poster or gouache look.">i</span></label>
           <select id="palette-size">
             <option value="0">Off (full color)</option>
@@ -270,7 +302,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann">
+        <div class="field" data-algos="hertzmann relaxation">
           <label>Angle jitter <span class="tip" tabindex="0" data-tip="Random per-step wobble in stroke direction, for a looser hand-made feel. Strong can look chaotic. Off = strokes follow image contours exactly.">i</span></label>
           <select id="angle-jitter">
             <option value="0">Off</option>
@@ -280,7 +312,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann">
+        <div class="field" data-algos="hertzmann relaxation">
           <label>Opacity jitter <span class="tip" tabindex="0" data-tip="Random per-stroke transparency variation, so some strokes read heavier than others. Off = every stroke uses the base opacity.">i</span></label>
           <select id="opacity-jitter">
             <option value="0">Off</option>
@@ -290,7 +322,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz">
+        <div class="field" data-algos="hertzmann litwinowicz relaxation">
           <label>Dry-brush falloff <span class="tip" tabindex="0" data-tip="Fades each stroke toward its tail like a brush running out of paint. Higher = shorter-looking, scratchier strokes.">i</span></label>
           <select id="dry-brush">
             <option value="0">Off</option>
@@ -300,7 +332,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz relaxation">
           <label>Direction smoothing <span class="tip" tabindex="0" data-tip="Smooths the stroke-direction field so nearby strokes flow together. Higher = calmer, more coherent flow; Off = raw per-pixel directions.">i</span></label>
           <select id="tensor-sigma">
             <option value="0">Off</option>
@@ -310,7 +342,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Impasto strength <span class="tip" tabindex="0" data-tip="How much each stroke builds up virtual paint thickness. Only visible when Impasto light is above Off.">i</span></label>
           <select id="impasto-strength">
             <option value="0">Off</option>
@@ -320,7 +352,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Impasto light <span class="tip" tabindex="0" data-tip="Directional light on the built-up paint relief. Higher = stronger 3D ridges; Off = flat.">i</span></label>
           <select id="impasto-light">
             <option value="0">Off</option>
@@ -330,7 +362,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli neural">
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
           <label>Light angle <span class="tip" tabindex="0" data-tip="Direction the impasto light comes from. Only affects the painting when Impasto light is above Off.">i</span></label>
           <select id="light-angle">
             <option value="135">Top-left</option>
@@ -344,7 +376,101 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="relaxation">
+          <label>Stroke economy <span class="tip" tabindex="0" data-tip="How much better a stroke must make the picture before it is worth painting, measured as average Lab improvement per unit of area covered. Higher = fewer, more deliberate strokes that leave more of the ground showing; lower = denser coverage.">i</span></label>
+          <select id="relax-area-weight">
+            <option value="2">Dense</option>
+            <option value="5" selected>Balanced</option>
+            <option value="10">Sparse</option>
+            <option value="18">Very sparse</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="relaxation">
+          <label>Relaxation passes <span class="tip" tabindex="0" data-tip="How many times the optimizer sweeps each layer. Each pass sees the strokes laid down by the previous one, so more passes refine the result — at a roughly proportional cost in time.">i</span></label>
+          <select id="relax-passes">
+            <option value="1" selected>1 (fastest)</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4 (slowest)</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="relaxation">
+          <label>Candidates per cell <span class="tip" tabindex="0" data-tip="How many alternative strokes the optimizer tries per grid cell before picking the best one. This is the search for a better stroke position; more candidates give tidier placement and cost proportionally more.">i</span></label>
+          <select id="relax-trials">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann relaxation litwinowicz">
+          <label>Edge tangent flow <span class="tip" tabindex="0" data-tip="Kang 2007 coherent flow field: iteratively aligns stroke directions along edges instead of smoothing across them. Cleaner, more confident stroke flow than Direction smoothing, at extra cost. Off uses the simpler structure tensor.">i</span></label>
+          <select id="etf-radius">
+            <option value="0">Off</option>
+            <option value="3">Subtle</option>
+            <option value="5">Medium</option>
+            <option value="8">Strong</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="litwinowicz">
+          <label>Orientation fill <span class="tip" tabindex="0" data-tip="In flat areas with no clear edges, interpolate stroke direction from nearby edges (as in the Litwinowicz paper) instead of using a constant 45°. Gives smoothly flowing strokes across skies and flat surfaces.">i</span></label>
+          <select id="orientation-fill">
+            <option value="0">Off (constant 45°)</option>
+            <option value="1">Interpolated</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann">
+          <label>GPU acceleration <span class="tip" tabindex="0" data-tip="Runs the blur, Lab colour conversion, error map, edge detection and stroke rasterization on the GPU via WebGL2 — about 88% of this style's work. Falls back to the CPU automatically if WebGL2 is unavailable. GPU output is visually equivalent but not bit-identical to the CPU path, and it implies Stroke batching.">i</span></label>
+          <select id="gpu-accel">
+            <option value="0">Off (CPU)</option>
+            <option value="1">On (WebGL2)</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann">
+          <label>Stroke batching <span class="tip" tabindex="0" data-tip="Grows every stroke in a layer against the canvas as it was at the start of that layer, then paints them together — which is what Hertzmann's own pseudocode does. Required by GPU acceleration. Deterministic, but produces a slightly different (equally valid) painting from the default.">i</span></label>
+          <select id="stroke-batching">
+            <option value="0">Off (live canvas)</option>
+            <option value="1">On (per layer)</option>
+          </select>
+        </div>
+
+
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
+          <label>Impasto profile <span class="tip" tabindex="0" data-tip="Shape of each stroke's virtual paint relief. Flat = classic coverage buildup; Rounded = ridge along the stroke spine; Rounded + bristle adds grooves from the brush texture. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="impasto-profile">
+            <option value="flat">Flat (classic)</option>
+            <option value="round">Rounded</option>
+            <option value="bristle">Rounded + bristle</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
+          <label>Light elevation <span class="tip" tabindex="0" data-tip="Height of the impasto light above the canvas. Low raking light exaggerates relief; overhead flattens it. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="light-elevation">
+            <option value="0.5">Default</option>
+            <option value="0.25">Low (raking)</option>
+            <option value="1">High</option>
+            <option value="2">Overhead</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz neural relaxation">
+          <label>Gloss <span class="tip" tabindex="0" data-tip="Specular shine on the paint ridges, like wet oil paint catching the light. Only affects the painting when Impasto light is above Off.">i</span></label>
+          <select id="specular">
+            <option value="0">Off</option>
+            <option value="0.15">Subtle</option>
+            <option value="0.3">Medium</option>
+            <option value="0.6">Glossy</option>
+          </select>
+        </div>
+
+        <div class="field" data-algos="hertzmann litwinowicz relaxation">
           <label>Bristle density <span class="tip" tabindex="0" data-tip="How many bristle gaps each brush has. Coarse = a few wide streaks; Very fine = many fine streaks. Only visible when Brush texture is above 0.">i</span></label>
           <select id="bristle-density">
             <option value="6">Coarse</option>
@@ -354,7 +480,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli pencil">
+        <div class="field" data-algos="hertzmann litwinowicz relaxation">
           <label>Stroke taper <span class="tip" tabindex="0" data-tip="How strongly textured strokes narrow at their ends. Blunt = square ends; Sharp = pointed tips. Only visible when Brush texture is above 0.">i</span></label>
           <select id="texture-taper">
             <option value="0">Blunt</option>
@@ -364,7 +490,7 @@
           </select>
         </div>
 
-        <div class="field" data-algos="hertzmann litwinowicz haeberli">
+        <div class="field" data-algos="hertzmann litwinowicz relaxation">
           <label>Salience center bias <span class="tip" tabindex="0" data-tip="Assumes the subject is near the middle of the frame: detail fades toward the corners. Off = no positional bias.">i</span></label>
           <select id="salience-center">
             <option value="0">Off</option>
@@ -374,7 +500,7 @@
           </select>
         </div>
 
-        <label class="checkbox-row" data-algos="hertzmann litwinowicz haeberli">
+        <label class="checkbox-row" data-algos="hertzmann litwinowicz relaxation">
           <input type="checkbox" id="salience-debug" />
           Show detail map (debug)
           <span class="tip" tabindex="0" data-tip="Renders the combined detail map instead of the painting: bright = areas that get finer strokes. Use it to check what the salience detector found.">i</span>

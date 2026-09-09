@@ -11,9 +11,9 @@ Implements five stroke-based rendering (SBR) algorithms — four from classic no
 | Style | Paper / origin | Character |
 |---|---|---|
 | **Curved Brush Strokes — Hertzmann '98** | Hertzmann, *Painterly Rendering with Curved Brush Strokes of Multiple Sizes* (SIGGRAPH 1998) | Layered coarse→fine curved strokes that follow image contours. The default and most tunable style. |
+| **Curved Strokes by Relaxation — Hertzmann '01** | Hertzmann, *Paint By Relaxation* (CGI 2001) | The same curved strokes, but placed by minimizing an energy: a stroke is painted only when the improvement it makes outweighs the area it costs. The result is markedly more economical — a few hundred deliberate strokes instead of thousands — with more of the ground left showing. |
 | **Impressionist Strokes — Litwinowicz '97** | Litwinowicz, *Processing Images and Video for an Impressionist Effect* (SIGGRAPH 1997) | Short oriented strokes on a jittered grid, clipped at strong edges so paint never bleeds across object boundaries. |
-| **Paint by Numbers — Haeberli '90** | Haeberli, *Paint By Numbers: Abstract Image Representations* (SIGGRAPH 1990) | Random point-sampled daubs, one pass per brush size, coarse to fine. Loose, collage-like paint dabs. |
-| **Colored Pencil Sketch** | Stroke-based hatching (classic NPR hatching techniques) | Colored directional hatch strokes on white paper, cross-hatching in shadows, dark contour lines, paper grain. Keeps the source colors. |
+| **Voronoi Stippling — Secord '02** | Secord, *Weighted Voronoi Stippling* (NPAR 2002) | Thousands of ink dots distributed by Lloyd relaxation, dense in dark areas, sparse in light ones — the classic hand-stippled illustration look. |
 | **Neural Paint Transformer — Liu '21** | Liu et al., *Paint Transformer: Feed Forward Neural Painting with Stroke Prediction* (ICCV 2021) | A transformer predicts, coarse to fine, the set of strokes that best reconstructs the image. Runs entirely in your browser via onnxruntime-web (WebGPU with wasm fallback) — first use downloads the ~19 MB model once and caches it. Slower than the classic styles but places strokes globally rather than by local heuristics. |
 
 Each algorithm responds to a different subset of the controls — irrelevant controls hide automatically when you switch styles. Hover any setting's ⓘ icon for an explanation.
@@ -152,7 +152,7 @@ Modulates each stroke's coverage with a procedural bristle tile: streaks along t
 #### Auto detail (salience) + strength
 **Default:** off &emsp; **Strength range:** 0.0 – 1.0, default 0.5
 
-Automatically finds the salient parts of the image (edge energy + local contrast, optionally biased toward the frame center) and concentrates finer, denser strokes there — no mask required. Combines with an uploaded detail mask by taking the stronger of the two signals. Affects the Hertzmann, Litwinowicz, and Haeberli styles. Enable **Show detail map** under Experimental to see exactly what the detector found.
+Automatically finds the salient parts of the image (edge energy + local contrast, optionally biased toward the frame center) and concentrates finer, denser strokes there — no mask required. Combines with an uploaded detail mask by taking the stronger of the two signals. Affects the Hertzmann, Relaxation, and Litwinowicz styles. Enable **Show detail map** under Experimental to see exactly what the detector found.
 
 ---
 
@@ -266,10 +266,69 @@ What the canvas is filled with before any strokes are placed.
 
 ---
 
+#### GPU acceleration (Curved Brush Strokes only)
+**Options:** Off (CPU) · On (WebGL2) — **Default:** Off
+
+Runs the Gaussian blur, Lab colour conversion, error map, edge detection, underpainting and stroke rasterization on the GPU — about 88% of this style's work. Measured **3.4–4.4× faster** end to end on an Apple M1 (640×480 through 1920×1080); the gap grows with resolution and stroke count.
+
+Falls back to the CPU automatically when WebGL2 or float render targets are unavailable, and per layer for anything the GPU rasterizer does not implement (brush texture, dry-brush, impasto relief). Direction smoothing (structure tensor) has no GPU pass, so it keeps the CPU maps and sees no speedup.
+
+GPU output is visually equivalent but **not** bit-identical to the CPU path — float rounding differs between drivers — so the CPU path remains the reproducible reference. Turning this on also turns on Stroke batching. See `tools/gpu-hertzmann-RESULTS.md`.
+
+---
+
+#### Stroke batching (Curved Brush Strokes only)
+**Options:** Off (live canvas) · On (per layer) — **Default:** Off
+
+Off, each stroke is painted as soon as it is grown, so later strokes in a layer grow against earlier ones. On, every stroke in a layer is grown against the canvas as it was at the *start* of that layer and they are all painted together — which is what Hertzmann's original pseudocode does.
+
+Both are deterministic and reproduce exactly from the seed. The batched painting differs slightly from the default (mean difference around 1/255) but is equally valid. GPU acceleration requires it.
+
+---
+
+#### Stroke economy / Relaxation passes / Candidates per cell (Relaxation only)
+
+**Stroke economy** is how much better a stroke must make the picture before it is worth painting, in average Lab improvement per unit of area covered. Higher leaves more ground showing and fewer, bolder strokes; lower fills in. **Relaxation passes** is how many times the optimizer sweeps each layer (each pass sees the previous one's strokes). **Candidates per cell** is how many alternative strokes it tries before picking the best — the search for a better position.
+
+Relaxation is an optimization, so it costs several times a normal render; use Fast preview while dialling settings. It also starts from a neutral ground: a blurred underpainting already sits near the energy minimum, so "Blurred image" is treated as "Average color".
+
+---
+
+#### Edge tangent flow
+**Options:** Off · Subtle · Medium · Strong — **Default:** Off
+
+An iteratively refined stroke-direction field (Kang, Lee & Chui 2007). Where *Direction smoothing* blurs directions — including across edges — this aligns them *along* edges, so strokes follow contours confidently instead of wandering near boundaries. Costs extra time and, in the curved-stroke style, disables the GPU map path (there is no ETF shader).
+
+---
+
 #### Fast preview
 **Default:** off
 
 When enabled, the image is downscaled to a maximum of 400 px on either side before painting, then the result is upscaled back to the original size. Produces a rough approximation in a fraction of the time — useful for dialling in parameters before a full-resolution render.
+
+---
+
+#### Seed
+**Default:** 0
+
+Random-number seed. The same seed with the same settings reproduces the exact same painting in every style; change it to get a different arrangement of strokes. The seed stays fixed across video and batch frames, which keeps stroke placement stable frame to frame.
+
+---
+
+#### Stippling controls (Voronoi Stippling only)
+
+| Control | Default | Effect |
+|---|---|---|
+| **Stipple points** | 8000 | Number of ink dots. More = darker, finer-grained reproduction. |
+| **Relaxation** | 12 | Lloyd relaxation iterations. More spreads dots into an even, hand-stippled distribution; 0 leaves the raw random sampling. |
+| **Dot size min / max** | 1 / 3 | Dot radius in the lightest / darkest areas. |
+| **Invert density** | off | Place dots in light areas instead of dark ones. |
+
+---
+
+#### Impasto profile, Light elevation, Gloss (experimental)
+
+Extensions of the impasto relief (Hertzmann 2002 *Fast Paint Texture*). **Impasto profile** picks the height model: *Flat (classic)* accumulates stroke coverage; *Rounded* gives each stroke a ridge along its spine that composites like real paint; *Rounded + bristle* carves brush-texture grooves into the ridge. **Light elevation** sets how high the light sits (low raking light exaggerates relief). **Gloss** adds a specular sheen to the ridges, like wet oil paint. All only take effect when Impasto light is above Off.
 
 ---
 
@@ -284,8 +343,9 @@ The **Preset** dropdown sets all parameters at once — including which algorith
 | **Pointillist** | Hertzmann '98 | Very short dabs on a fine grid, no curvature — Seurat / Signac |
 | **Wash** | Hertzmann '98 | Large translucent strokes with high colour jitter — loose watercolour |
 | **Impressionist Strokes** | Litwinowicz '97 | Dense short oriented strokes, crisp object edges |
-| **Paint Daubs** | Haeberli '90 | Bold random daubs, coarse to fine |
-| **Colored Pencil** | Pencil sketch | Colored hatching on white paper |
+| **Deliberate** | Hertzmann '01 | Energy-placed strokes over a neutral ground, coherent flow |
+| **Economical** | Hertzmann '01 | Strong area penalty — sparse, confident marks on white |
+| **Stippled** | Secord '02 | Evenly-spaced ink dots, dense in shadows |
 
 Selecting a preset fills all controls; any subsequent edit switches the dropdown to **Custom**. Note that presets also set experimental values (e.g. hue/value jitter) — those only apply while the Experimental toggle is on. Preset definitions live in the `PRESETS` object in `main.js` and are easy to tune.
 
@@ -293,7 +353,7 @@ Selecting a preset fills all controls; any subsequent edit switches the dropdown
 
 ### Detail (optional, Image mode)
 
-Two ways to concentrate detail where it matters; when both are active the stronger signal wins at each pixel. In the Hertzmann style the detail map lowers the error threshold T locally; in Litwinowicz it adds extra, thinner strokes; in Haeberli it shrinks dabs and adds extra ones.
+Two ways to concentrate detail where it matters; when both are active the stronger signal wins at each pixel. In the Hertzmann style the detail map lowers the error threshold T locally; in Relaxation it lowers the price a stroke must beat, so strokes are accepted more readily; in Litwinowicz it adds extra, thinner strokes.
 
 **Auto detail (salience):** enable the checkbox and the renderer finds the subject automatically (edge energy + local contrast, center-weighted). No mask needed.
 

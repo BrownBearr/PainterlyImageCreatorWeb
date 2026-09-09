@@ -154,7 +154,7 @@ function neuralCutPatch(layer, L, ox, oy, dst, slot) {
 // Decode one batch of network outputs into strokes and paint them at full
 // canvas resolution through the shared stroke rasterizer.
 function neuralPaintStrokes(env, outParam, outDecision, origins, count, layerImg, L, scale, padX, padY, radiusIndex) {
-  const { canvasRGB, w, h, params, palette, heightBuf, brushTex } = env;
+  const { canvasRGB, w, h, params, palette, brushTex, sink } = env;
   const { opacity, impastoStrength = 0 } = params;
   const P = NEURAL_PATCH;
   const col = new Float32Array(3);
@@ -195,12 +195,14 @@ function neuralPaintStrokes(env, outParam, outDecision, origins, count, layerImg
       const sx = (Math.max(0, Math.min(w - 1, cx)) + padX) / scale;
       const sy = (Math.max(0, Math.min(h - 1, cy)) + padY) / scale;
       neuralSampleRGB(layerImg, L, L, sx - 0.5, sy - 0.5, col);
-      const color = finalizeStrokeColor(col[0] * 255, col[1] * 255, col[2] * 255, params, palette);
+      const color = finalizeStrokeColor(col[0] * 255, col[1] * 255, col[2] * 255, params, palette, env.colorRand);
 
       const pts = [[cx - dx * halfLen, cy - dy * halfLen], [cx + dx * halfLen, cy + dy * halfLen]];
-      renderStrokeSolid(canvasRGB, pts, radius, color, opacity, w, h,
-                        heightBuf, impastoStrength, 0,
-                        getStrokeTexture(brushTex, radiusIndex, cx, cy));
+      sink.emit({
+        pts, radius, color, opacity, layer: radiusIndex,
+        tex: getStrokeTexture(brushTex, radiusIndex, cx, cy),
+        dryBrush: 0, height: impastoStrength,
+      });
       painted++;
     }
   }
@@ -234,6 +236,9 @@ async function neuralRunPatches(env, session, layerImg, resultImg, L, origins, s
 async function paintNeural(env) {
   const { srcRGB, canvasRGB, w, h, params, onProgress } = env;
   const onStatus = env.onStatus || null;
+  // Seeded color-jitter RNG so neural renders reproduce for a given seed
+  // (finalizeStrokeColor would otherwise fall back to Math.random).
+  env.colorRand = mulberry32(0x7A1D7E ^ (params.seed | 0));
 
   const session = await neuralEnsureSession(onStatus);
   onStatus && onStatus(`Painting with Paint Transformer (${_neuralSessionEP})…`);

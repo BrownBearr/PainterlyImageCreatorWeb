@@ -54,6 +54,13 @@ const PRESET_DEFAULTS = {
   salienceOn: false, salienceStrength: 0.5,
   neuralLevels: 4,
   underpaintMode: 'blur', fastPreview: false,
+  seed: 0,
+  orientationFill: 0,
+  gpuAccel: 0, strokeBatching: 0,
+  relaxAreaWeight: 5, relaxPasses: 1, relaxTrials: 2,
+  etfRadius: 0,
+  stipplePoints: 8000, stippleIters: 12,
+  stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
 };
 
 const PRESETS = {
@@ -96,6 +103,29 @@ const PRESETS = {
     hueJitter: 0.2, satJitter: 0.3, valJitter: 0.2,
     underpaintMode: 'blur', fastPreview: false,
   },
+  // ── Hertzmann '01 — Paint By Relaxation: strokes placed by optimization ──
+  deliberate: {
+    // Energy-driven placement over a neutral ground — fewer, more chosen strokes
+    algorithm: 'relaxation',
+    brushRadii: '16, 8, 4',
+    maxStrokeLength: 20, minStrokeLength: 6,
+    curvature: 1.0, gridFactor: 1.0, opacity: 0.95,
+    satJitter: 0.06, valJitter: 0.05,
+    relaxAreaWeight: 5, relaxPasses: 2, relaxTrials: 2,
+    etfRadius: 5,
+    underpaintMode: 'average', fastPreview: false,
+  },
+  economical: {
+    // Strong area penalty: sparse, confident marks with the ground showing
+    algorithm: 'relaxation',
+    brushRadii: '20, 10, 5',
+    maxStrokeLength: 28, minStrokeLength: 8,
+    curvature: 1.0, gridFactor: 1.2, opacity: 1.0,
+    satJitter: 0.1, valJitter: 0.08,
+    relaxAreaWeight: 10, relaxPasses: 3, relaxTrials: 3,
+    etfRadius: 5,
+    underpaintMode: 'none', fastPreview: false,
+  },
   // ── Litwinowicz '97 — short oriented strokes, clipped at edges ──
   litstrokes: {
     algorithm: 'litwinowicz',
@@ -105,25 +135,15 @@ const PRESETS = {
     hueJitter: 0.03, satJitter: 0.05, valJitter: 0.05,
     brushTexture: 0.5,
     underpaintMode: 'blur', fastPreview: false,
+    orientationFill: 1,
   },
-  // ── Haeberli '90 — paint by numbers: random point-sampled daubs ──
-  daubs: {
-    algorithm: 'haeberli',
-    brushRadii: '16, 8, 4',
-    maxStrokeLength: 6, minStrokeLength: 1,
-    gridFactor: 1.0, opacity: 0.9,
-    satJitter: 0.1, valJitter: 0.08,
-    underpaintMode: 'average', fastPreview: false,
-  },
-  // ── Colored pencil sketch — hatching strokes on white paper ──
-  pencilsketch: {
-    algorithm: 'pencil',
-    brushRadii: '2, 1',
-    maxStrokeLength: 14, minStrokeLength: 6,
-    gridFactor: 0.8, opacity: 0.45,
-    satJitter: 0.05,
-    brushTexture: 0.5,
-    underpaintMode: 'none', fastPreview: false,
+  // ── Secord '02 — weighted Voronoi stippling ──
+  stippled: {
+    algorithm: 'stipple',
+    opacity: 1.0,
+    stipplePoints: 8000, stippleIters: 12,
+    stippleDotMin: 1, stippleDotMax: 3, stippleInvert: false,
+    fastPreview: false,
   },
 };
 
@@ -176,6 +196,19 @@ function applyPreset(key) {
   setSlider('neural-levels', p.neuralLevels);
   document.getElementById('underpaint-mode').value = p.underpaintMode;
   document.getElementById('fast-preview').checked = p.fastPreview;
+  document.getElementById('seed').value = p.seed;
+  setSlider('orientation-fill', p.orientationFill);
+  setSlider('relax-area-weight', p.relaxAreaWeight);
+  setSlider('relax-passes', p.relaxPasses);
+  setSlider('relax-trials', p.relaxTrials);
+  setSlider('etf-radius', p.etfRadius);
+  setSlider('gpu-accel', p.gpuAccel);
+  setSlider('stroke-batching', p.strokeBatching);
+  setSlider('stipple-points', p.stipplePoints);
+  setSlider('stipple-iters', p.stippleIters);
+  setSlider('stipple-dot-min', p.stippleDotMin);
+  setSlider('stipple-dot-max', p.stippleDotMax);
+  document.getElementById('stipple-invert').checked = p.stippleInvert;
   _applyingPreset = false;
   updateControlVisibility();
 }
@@ -479,12 +512,29 @@ function getParams() {
     impastoStrength:      num('impasto-strength'),
     impastoLightStrength: num('impasto-light'),
     lightAngle:           parseFloat(document.getElementById('light-angle').value) || 45,
+    impastoProfile:       document.getElementById('impasto-profile').value,
+    lightElevation:       parseFloat(document.getElementById('light-elevation').value) || 0.5,
+    specularStrength:     num('specular'),
+    orientationFill:      num('orientation-fill') > 0,
+    stipplePoints:        parseInt(document.getElementById('stipple-points').value, 10) || 8000,
+    stippleIters:         parseInt(document.getElementById('stipple-iters').value, 10) || 0,
+    stippleDotMin:        num('stipple-dot-min'),
+    stippleDotMax:        num('stipple-dot-max'),
+    stippleInvert:        document.getElementById('stipple-invert').checked,
+    relaxAreaWeight:      num('relax-area-weight'),
+    relaxPasses:          parseInt(document.getElementById('relax-passes').value, 10) || 1,
+    relaxTrials:          parseInt(document.getElementById('relax-trials').value, 10) || 2,
+    etfRadius:            num('etf-radius'),
+    etfIterations:        2,
+    gpuAccel:             num('gpu-accel') > 0,
+    strokeBatching:       num('stroke-batching') > 0,
     frameDiffThreshold:   parseFloat(document.getElementById('frame-diff').value) || 0,
     maskData:   maskImageData ? new Uint8ClampedArray(maskImageData.data) : null,
     maskWidth:  maskImageData ? maskImageData.width  : 0,
     maskHeight: maskImageData ? maskImageData.height : 0,
     fastPreview:          document.getElementById('fast-preview').checked,
     underpaintMode:  document.getElementById('underpaint-mode').value,
+    seed:            parseInt(document.getElementById('seed').value, 10) || 0,
   };
 }
 
@@ -654,7 +704,9 @@ function setStatus(msg) { statusText.textContent = msg; }
  ['brush-texture','brush-texture-val'],
  ['salience-strength','salience-strength-val'],
  ['neural-levels','neural-levels-val'],
- ['frame-diff','frame-diff-val']]
+ ['frame-diff','frame-diff-val'],
+ ['stipple-points','stipple-points-val'], ['stipple-iters','stipple-iters-val'],
+ ['stipple-dot-min','stipple-dot-min-val'], ['stipple-dot-max','stipple-dot-max-val']]
   .forEach(([id, labelId]) => {
     const inp = document.getElementById(id), lbl = document.getElementById(labelId);
     if (!inp || !lbl) return;
@@ -721,7 +773,10 @@ document.getElementById('algorithm-select').addEventListener('change', () => {
  'hue-jitter', 'sat-jitter', 'val-jitter', 'size-jitter', 'angle-jitter', 'opacity-jitter',
  'brush-texture', 'bristle-density', 'texture-taper',
  'salience-toggle', 'salience-strength', 'salience-center', 'neural-levels',
- 'impasto-strength', 'impasto-light', 'light-angle', 'underpaint-mode', 'fast-preview']
+ 'impasto-strength', 'impasto-light', 'light-angle', 'impasto-profile', 'light-elevation', 'specular',
+ 'orientation-fill', 'underpaint-mode', 'fast-preview',
+ 'gpu-accel', 'stroke-batching', 'relax-area-weight', 'relax-passes', 'relax-trials', 'etf-radius',
+ 'stipple-points', 'stipple-iters', 'stipple-dot-min', 'stipple-dot-max', 'stipple-invert']
   .forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;

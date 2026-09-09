@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GPU rasterizer prototype — Painterly Image Creator</title>
+<style>
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 24px; background: #16161a; color: #e8e8ec; }
+  h1 { font-size: 18px; }
+  p.note { color: #aab; max-width: 70ch; }
+  button { padding: 6px 14px; margin-right: 8px; }
+  table { border-collapse: collapse; margin-top: 16px; }
+  th, td { border: 1px solid #333; padding: 4px 10px; font-family: ui-monospace, monospace; font-size: 13px; text-align: right; }
+  th { background: #222; text-align: left; }
+  td.k { text-align: left; }
+  .good { color: #6fdf8f; }
+  .warn { color: #ffcf6f; }
+  .bad { color: #ff7b7b; }
+  .previews { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
+  .previews figure { margin: 0; }
+  .previews figcaption { font-size: 12px; color: #99a; margin-bottom: 4px; }
+  canvas { image-rendering: pixelated; border: 1px solid #333; max-width: 420px; height: auto; background: #000; }
+  #status { margin-left: 8px; color: #aab; }
+</style>
+</head>
+<body>
+<h1>GPU rasterizer prototype — CPU vs WebGL2</h1>
+<p class="note">
+  Captures each style's exact stroke list from the real worker, then rasterizes
+  that identical list two ways — the CPU <code>renderStrokeSolid</code> math and a
+  WebGL2 instanced-capsule shader — over the same white base. The CPU↔GPU delta
+  (and differing hashes) is the fidelity/determinism signal; the timing columns
+  are the speed signal. Solid strokes only; textured/impasto excluded by design.
+  Serve the repo root (<code>npx serve .</code>) and open <code>/tools/gpu-proto.html</code>.
+</p>
+<button id="run">Run benchmark</button>
+<span id="status"></span>
+
+<table id="results" hidden>
+  <thead><tr>
+    <th>style</th><th>size</th><th>strokes</th><th>instances</th>
+    <th>CPU ms</th><th>GPU draw ms</th><th>GPU read ms</th><th>speedup</th>
+    <th>max Δ</th><th>mean Δ</th><th>CPU hash</th><th>GPU hash</th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+
+<div class="previews" id="previews"></div>
+
+<script src="parity-common.js"></script>
+<script src="gpu-proto.js"></script>
+<script>
+'use strict';
+const P = window.__gpuProto;
+const statusEl = document.getElementById('status');
+const tbody = document.querySelector('#results tbody');
+const previews = document.getElementById('previews');
+
+// Shared WebGL2 context (max size across the sweep).
+const glCanvas = document.createElement('canvas');
+glCanvas.width = 1920; glCanvas.height = 1080;
+const gl = glCanvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
+
+const STYLES = [
+  { name: 'hertzmann', params: { algorithm: 'hertzmann', brushRadii: [8, 4, 2], threshold: 40, maxStrokeLength: 16, minStrokeLength: 4, curvature: 1, opacity: 0.9, gridFactor: 1, underpaintMode: 'blur', seed: 1 } },
+  { name: 'haeberli',  params: { algorithm: 'haeberli', brushRadii: [16, 8, 4], maxStrokeLength: 6, gridFactor: 1, opacity: 0.9, underpaintMode: 'average', seed: 1 } },
+  { name: 'stipple',   params: { algorithm: 'stipple', brushRadii: [8, 4, 2], opacity: 1, stipplePoints: 20000, stippleIters: 10, stippleDotMin: 1, stippleDotMax: 3, seed: 1 } },
+];
+const SIZES = [[320, 240], [1280, 720], [1920, 1080]];
+
+function whiteBase(w, h) {
+  const b = new Float32Array(w * h * 3);
+  b.fill(255);
+  return b;
+}
+
+function showPreview(title, rgba, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+  const fig = document.createElement('figure');
+  const cap = document.createElement('figcaption');
+  cap.textContent = title;
+  fig.appendChild(cap); fig.appendChild(c);
+  previews.appendChild(fig);
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  if (!gl) { statusEl.textContent = 'WebGL2 unavailable in this browser.'; return; }
+  document.getElementById('results').hidden = false;
+  tbody.innerHTML = ''; previews.innerHTML = '';
+  const raster = P.makeGpuRasterizer(gl);
+  const baseImg = makeParityImage(); // 320×240 from parity-common.js
+
+  for (const style of STYLES) {
+    for (const [w, h] of SIZES) {
+      statusEl.textContent = `Capturing ${style.name} @ ${w}×${h}…`;
+      await new Promise(r => setTimeout(r)); // let the status paint
+      const img = P.scaleImage(baseImg, w, h);
+      const res = await P.captureStrokes(img, style.params);
+      const strokes = res.strokes || [];
+      const under = whiteBase(w, h);
+
+      const t0 = performance.now();
+      const cpuBuf = P.cpuRasterize(strokes, w, h, under);
+      const cpuMs = performance.now() - t0;
+      const cpuRGBA = P.floatRGBtoRGBA(cpuBuf, w, h);
+
+      const g = raster.rasterize(strokes, w, h, under);
+      const { maxD, meanD, amp } = P.diffStats(cpuRGBA, g.rgba, w, h);
+
+      const cpuHash = parityHash(cpuRGBA);
+      const gpuHash = parityHash(g.rgba);
+      const speedup = g.drawMs > 0 ? (cpuMs / g.drawMs) : 0;
+
+      const cls = maxD <= 4 ? 'good' : (maxD <= 32 ? 'warn' : 'bad');
+      const row = document.createElement('tr');
+      row.innerHTML =
+        `<td class="k">${style.name}</td><td>${w}×${h}</td><td>${strokes.length}</td><td>${g.instanceCount}</td>` +
+        `<td>${cpuMs.toFixed(1)}</td><td>${g.drawMs.toFixed(2)}</td><td>${g.readMs.toFixed(2)}</td>` +
+        `<td class="${speedup >= 5 ? 'good' : 'warn'}">${speedup.toFixed(1)}×</td>` +
+        `<td class="${cls}">${maxD}</td><td>${meanD.toFixed(2)}</td>` +
+        `<td>${cpuHash}</td><td>${gpuHash}</td>`;
+      tbody.appendChild(row);
+
+      // Preview only the largest size per style (keeps the page light).
+      if (w === 1920 || (style.name === 'stipple' && w === 1280)) {
+        showPreview(`${style.name} ${w}×${h} — CPU`, cpuRGBA, w, h);
+        showPreview(`${style.name} ${w}×${h} — GPU`, g.rgba, w, h);
+        showPreview(`${style.name} ${w}×${h} — Δ×8`, amp, w, h);
+      }
+    }
+  }
+  statusEl.textContent = 'Done.';
+});
+</script>
+</body>
+</html>
